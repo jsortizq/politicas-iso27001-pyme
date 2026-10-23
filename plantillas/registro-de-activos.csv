@@ -1,0 +1,7 @@
+ID;Activo;Tipo;Ubicación;Propietario;Responsable técnico;Confidencialidad (1-3);Integridad (1-3);Disponibilidad (1-3);Criticidad;Respaldo;Observaciones
+A-001;Servidor de archivos SRV-01;Hardware;Cuarto técnico;Gerencia;Sistemas;3;3;3;Alta;Diario a NAS + nube;Windows Server 2022
+A-002;Base de datos contable;Información;SRV-01;Contabilidad;Sistemas;3;3;3;Alta;Log cada 30 min;SQL Server
+A-003;Firewall perimetral;Hardware;Rack principal;Gerencia;Sistemas;2;3;3;Alta;Configuración mensual;
+A-004;Sistema de cámaras (NVR);Hardware;Rack principal;Administración;Sistemas;2;2;2;Media;No aplica;Retención 30 días
+A-005;PLC línea de producción 1;Hardware;Planta;Producción;Mantenimiento;1;3;3;Alta;Programa en cada cambio;
+A-006;Portátil gerencia;Hardware;Móvil;Gerencia;Sistemas;3;2;2;Media;Carpetas sincronizadas;Cifrado BitLocker
