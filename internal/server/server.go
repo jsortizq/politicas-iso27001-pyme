@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/api"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/auth"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/health"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
@@ -54,6 +55,12 @@ func (s *Server) routes() http.Handler {
 	healthHandler := health.NewHandler(s.logger)
 	mux.HandleFunc("GET /healthz", healthHandler.Liveness)
 	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
+
+	// ── Auth routes (no tenant context) ──
+	devMode := s.cfg.Auth.Issuer == "" // dev mode when no OIDC issuer
+	sessions := auth.NewSessionStore(8 * time.Hour)
+	authHandler := auth.NewHandler(sessions, devMode)
+	authHandler.Register(mux)
 
 	// ── API v1 routes (tenant-scoped) ──
 	apiMux := http.NewServeMux()
