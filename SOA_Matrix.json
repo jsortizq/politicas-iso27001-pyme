@@ -17,10 +17,10 @@
       "applicable": true,
       "justification": "Requerido para establecer la dirección de gestión de la seguridad",
       "implementation_status": "implemented",
-      "policy_file_es": "docs/es/politicas/control-contrasenas.md",
-      "policy_file_en": "docs/en/policies/password-control.md",
+      "policy_file_es": "docs/es/politicas/politica-seguridad-informacion.md",
+      "policy_file_en": "docs/en/policies/information-security-policy.md",
       "validation_method": "cli:validate-docs",
-      "evidence": "Políticas aprobadas por Dirección, publicadas en repositorio",
+      "evidence": "Política marco de seguridad aprobada por Dirección, publicada en repositorio",
       "owner": "[RESPONSABLE_SEGURIDAD]"
     },
     {
@@ -197,9 +197,9 @@
     "total_controls_evaluated": 14,
     "applicable": 14,
     "not_applicable": 0,
-    "fully_implemented": 12,
-    "partially_implemented": 2,
+    "fully_implemented": 13,
+    "partially_implemented": 1,
     "not_implemented": 0,
-    "compliance_percentage": 85.7
+    "compliance_percentage": 92.9
   }
 }
