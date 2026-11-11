@@ -1,0 +1,65 @@
+name: ISO 27001 Compliance CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build & Test CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build CLI
+        run: go build -v -o iso-cli ./cmd/iso-cli/
+
+      - name: Run CLI version check
+        run: ./iso-cli version
+
+      - name: Validate documentation (non-strict)
+        run: ./iso-cli validate-docs --path ./docs/
+
+      - name: Export SoA report
+        run: ./iso-cli export-soa --input SOA_Matrix.json --output compliance-report.json
+
+      - name: Upload compliance report
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-report
+          path: compliance-report.json
+          retention-days: 30
+
+  validate-docs:
+    name: Check for unfilled variables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build CLI
+        run: go build -o iso-cli ./cmd/iso-cli/
+
+      - name: Validate docs (strict mode)
+        run: ./iso-cli validate-docs --path ./docs/ --strict
+        continue-on-error: true
+
+  lint-json:
+    name: Validate JSON files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate SOA_Matrix.json
+        run: python3 -m json.tool SOA_Matrix.json > /dev/null
