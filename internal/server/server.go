@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/api"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/health"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
@@ -55,16 +56,22 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
 
 	// ── API v1 routes (tenant-scoped) ──
-	api := http.NewServeMux()
-	api.HandleFunc("GET /v1/info", s.handleInfo)
+	apiMux := http.NewServeMux()
+	apiMux.HandleFunc("GET /v1/info", s.handleInfo)
+
+	// SoA CRUD endpoints
+	soaStore := api.NewMemorySoAStore()
+	soaHandler := api.NewSoAHandler(soaStore, s.logger)
+	soaHandler.Register(apiMux)
 
 	// Wrap API routes with tenant middleware
-	mux.Handle("GET /api/", http.StripPrefix("/api", tenant.Middleware(api)))
-	mux.Handle("POST /api/", http.StripPrefix("/api", tenant.Middleware(api)))
-	mux.Handle("PUT /api/", http.StripPrefix("/api", tenant.Middleware(api)))
-	mux.Handle("PATCH /api/", http.StripPrefix("/api", tenant.Middleware(api)))
-	mux.Handle("DELETE /api/", http.StripPrefix("/api", tenant.Middleware(api)))
-	mux.Handle("OPTIONS /api/", http.StripPrefix("/api", tenant.Middleware(api)))
+	tenantAPI := tenant.Middleware(apiMux)
+	mux.Handle("GET /api/", http.StripPrefix("/api", tenantAPI))
+	mux.Handle("POST /api/", http.StripPrefix("/api", tenantAPI))
+	mux.Handle("PUT /api/", http.StripPrefix("/api", tenantAPI))
+	mux.Handle("PATCH /api/", http.StripPrefix("/api", tenantAPI))
+	mux.Handle("DELETE /api/", http.StripPrefix("/api", tenantAPI))
+	mux.Handle("OPTIONS /api/", http.StripPrefix("/api", tenantAPI))
 
 	// ── Root handler ──
 	mux.HandleFunc("GET /", s.handleRoot)
