@@ -1,0 +1,78 @@
+{
+  "standard": "ISO/IEC 27001:2022",
+  "description": "Management system requirements (clauses 4-10)",
+  "clauses": [
+    {
+      "id": "4",
+      "title": "Context of the organization",
+      "title_es": "Contexto de la organización",
+      "subclauses": [
+        { "id": "4.1", "title": "Understanding the organization and its context", "title_es": "Comprensión de la organización y su contexto" },
+        { "id": "4.2", "title": "Understanding the needs and expectations of interested parties", "title_es": "Comprensión de las necesidades y expectativas de las partes interesadas" },
+        { "id": "4.3", "title": "Determining the scope of the ISMS", "title_es": "Determinación del alcance del SGSI" },
+        { "id": "4.4", "title": "Information security management system", "title_es": "Sistema de gestión de seguridad de la información" }
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Leadership",
+      "title_es": "Liderazgo",
+      "subclauses": [
+        { "id": "5.1", "title": "Leadership and commitment", "title_es": "Liderazgo y compromiso" },
+        { "id": "5.2", "title": "Policy", "title_es": "Política" },
+        { "id": "5.3", "title": "Organizational roles, responsibilities and authorities", "title_es": "Roles, responsabilidades y autoridades organizacionales" }
+      ]
+    },
+    {
+      "id": "6",
+      "title": "Planning",
+      "title_es": "Planificación",
+      "subclauses": [
+        { "id": "6.1", "title": "Actions to address risks and opportunities", "title_es": "Acciones para tratar riesgos y oportunidades" },
+        { "id": "6.2", "title": "Information security objectives and planning to achieve them", "title_es": "Objetivos de seguridad de la información y planificación para lograrlos" },
+        { "id": "6.3", "title": "Planning of changes", "title_es": "Planificación de cambios" }
+      ]
+    },
+    {
+      "id": "7",
+      "title": "Support",
+      "title_es": "Soporte",
+      "subclauses": [
+        { "id": "7.1", "title": "Resources", "title_es": "Recursos" },
+        { "id": "7.2", "title": "Competence", "title_es": "Competencia" },
+        { "id": "7.3", "title": "Awareness", "title_es": "Concienciación" },
+        { "id": "7.4", "title": "Communication", "title_es": "Comunicación" },
+        { "id": "7.5", "title": "Documented information", "title_es": "Información documentada" }
+      ]
+    },
+    {
+      "id": "8",
+      "title": "Operation",
+      "title_es": "Operación",
+      "subclauses": [
+        { "id": "8.1", "title": "Operational planning and control", "title_es": "Planificación y control operacional" },
+        { "id": "8.2", "title": "Information security risk assessment", "title_es": "Evaluación de riesgos de seguridad de la información" },
+        { "id": "8.3", "title": "Information security risk treatment", "title_es": "Tratamiento de riesgos de seguridad de la información" }
+      ]
+    },
+    {
+      "id": "9",
+      "title": "Performance evaluation",
+      "title_es": "Evaluación del desempeño",
+      "subclauses": [
+        { "id": "9.1", "title": "Monitoring, measurement, analysis and evaluation", "title_es": "Monitoreo, medición, análisis y evaluación" },
+        { "id": "9.2", "title": "Internal audit", "title_es": "Auditoría interna" },
+        { "id": "9.3", "title": "Management review", "title_es": "Revisión por la dirección" }
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Improvement",
+      "title_es": "Mejora",
+      "subclauses": [
+        { "id": "10.1", "title": "Continual improvement", "title_es": "Mejora continua" },
+        { "id": "10.2", "title": "Nonconformity and corrective action", "title_es": "No conformidad y acción correctiva" }
+      ]
+    }
+  ]
+}
