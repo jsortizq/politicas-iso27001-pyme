@@ -1,6 +1,6 @@
 # Binaries
-iso-cli
-iso-cli.exe
+/iso-cli
+/iso-cli.exe
 *.exe
 *.dll
 *.so
