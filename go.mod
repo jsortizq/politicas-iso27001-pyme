@@ -1,3 +1,3 @@
 module github.com/jsortizq/politicas-iso27001-pyme
 
-go 1.21
+go 1.23

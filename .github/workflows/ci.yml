@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  build:
-    name: Build & Test CLI
+  build-and-test:
+    name: Build, Test & Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +16,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.23'
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run tests
+        run: go test -race -v ./...
 
       - name: Build CLI
         run: go build -v -o iso-cli ./cmd/iso-cli/
@@ -24,8 +30,38 @@ jobs:
       - name: Run CLI version check
         run: ./iso-cli version
 
-      - name: Validate documentation (non-strict)
-        run: ./iso-cli validate-docs --path ./docs/
+  validate-docs:
+    name: Validate documentation
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build CLI
+        run: go build -o iso-cli ./cmd/iso-cli/
+
+      - name: Validate docs (strict mode)
+        run: ./iso-cli validate-docs --path ./docs/ --strict
+
+  compliance-report:
+    name: Generate compliance report
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build CLI
+        run: go build -o iso-cli ./cmd/iso-cli/
 
       - name: Export SoA report
         run: ./iso-cli export-soa --input SOA_Matrix.json --output compliance-report.json
@@ -36,24 +72,6 @@ jobs:
           name: compliance-report
           path: compliance-report.json
           retention-days: 30
-
-  validate-docs:
-    name: Check for unfilled variables
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.21'
-
-      - name: Build CLI
-        run: go build -o iso-cli ./cmd/iso-cli/
-
-      - name: Validate docs (strict mode)
-        run: ./iso-cli validate-docs --path ./docs/ --strict
-        continue-on-error: true
 
   lint-json:
     name: Validate JSON files
