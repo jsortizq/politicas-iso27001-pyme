@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
@@ -88,7 +87,7 @@ func TestListSoAEntries(t *testing.T) {
 	doRequest(handler, http.MethodPost, "/v1/soa",
 		`{"control_id":"A.5.1","applicable":true,"implementation_pct":100,"effectiveness_pct":90}`)
 	doRequest(handler, http.MethodPost, "/v1/soa",
-		`{"control_id":"A.5.2","applicable":false,"implementation_pct":0,"effectiveness_pct":0}`)
+		`{"control_id":"A.5.2","applicable":false,"justification":"Fuera del alcance","implementation_pct":0,"effectiveness_pct":0}`)
 
 	rr := doRequest(handler, http.MethodGet, "/v1/soa", "")
 
@@ -242,7 +241,7 @@ func TestSoASummary(t *testing.T) {
 	doRequest(handler, http.MethodPost, "/v1/soa",
 		`{"control_id":"A.5.2","applicable":true,"implementation_pct":50,"effectiveness_pct":40}`)
 	doRequest(handler, http.MethodPost, "/v1/soa",
-		`{"control_id":"A.5.3","applicable":false,"implementation_pct":0,"effectiveness_pct":0}`)
+		`{"control_id":"A.5.3","applicable":false,"justification":"Fuera del alcance","implementation_pct":0,"effectiveness_pct":0}`)
 
 	rr := doRequest(handler, http.MethodGet, "/v1/soa/summary", "")
 
@@ -337,7 +336,7 @@ func TestValidateControlID(t *testing.T) {
 	}{
 		{"A.5.1", true},
 		{"A.8.13", true},
-		{"A.12.1", true},
+		{"A.12.1", false}, // well-formed but not an Annex A:2022 control
 		{"B.5.1", false},
 		{"A.5", false},
 		{"5.1", false},
@@ -345,8 +344,7 @@ func TestValidateControlID(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		_ = strings.Contains(tt.id, "A") // suppress unused
-		e := &SoAEntry{ControlID: tt.id, ImplementationPct: 50, EffectivenessPct: 50}
+		e := &SoAEntry{ControlID: tt.id, Applicable: true, ImplementationPct: 50, EffectivenessPct: 50}
 		err := validateSoAEntry(e)
 		if tt.valid && err != nil {
 			t.Errorf("validateSoAEntry(%q) unexpected error: %v", tt.id, err)
@@ -354,5 +352,71 @@ func TestValidateControlID(t *testing.T) {
 		if !tt.valid && err == nil {
 			t.Errorf("validateSoAEntry(%q) expected error", tt.id)
 		}
+	}
+}
+
+func TestCreateSoAEntry_DuplicateControl(t *testing.T) {
+	_, mux := setupHandler()
+	handler := withTenant(mux)
+	body := `{"control_id":"A.5.1","applicable":true}`
+
+	if rr := doRequest(handler, http.MethodPost, "/v1/soa", body); rr.Code != http.StatusCreated {
+		t.Fatalf("first create: expected 201, got %d", rr.Code)
+	}
+	if rr := doRequest(handler, http.MethodPost, "/v1/soa", body); rr.Code != http.StatusConflict {
+		t.Errorf("duplicate control: expected 409, got %d", rr.Code)
+	}
+}
+
+func TestCreateSoAEntry_NotApplicableNeedsJustification(t *testing.T) {
+	_, mux := setupHandler()
+	handler := withTenant(mux)
+
+	rr := doRequest(handler, http.MethodPost, "/v1/soa", `{"control_id":"A.7.1","applicable":false}`)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422, got %d", rr.Code)
+	}
+}
+
+func TestInitializeSoA(t *testing.T) {
+	_, mux := setupHandler()
+	handler := withTenant(mux)
+
+	// One control assessed beforehand must survive initialization untouched.
+	doRequest(handler, http.MethodPost, "/v1/soa",
+		`{"control_id":"A.5.1","applicable":true,"implementation_pct":70}`)
+
+	rr := doRequest(handler, http.MethodPost, "/v1/soa/initialize", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("initialize: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var res map[string]int
+	json.NewDecoder(rr.Body).Decode(&res)
+	if res["created"] != 92 || res["total"] != 93 {
+		t.Errorf("expected 92 created / 93 total, got %v", res)
+	}
+
+	// Idempotent
+	rr = doRequest(handler, http.MethodPost, "/v1/soa/initialize", "")
+	json.NewDecoder(rr.Body).Decode(&res)
+	if res["created"] != 0 || res["total"] != 93 {
+		t.Errorf("second run: expected 0 created / 93 total, got %v", res)
+	}
+
+	rr = doRequest(handler, http.MethodGet, "/v1/soa", "")
+	var list struct {
+		Data []SoAEntry `json:"data"`
+	}
+	json.NewDecoder(rr.Body).Decode(&list)
+	if len(list.Data) != 93 {
+		t.Fatalf("expected 93 entries, got %d", len(list.Data))
+	}
+	first := list.Data[0]
+	if first.ControlID != "A.5.1" || first.ImplementationPct != 70 || first.ControlTitle == "" {
+		t.Errorf("first entry should be the pre-assessed A.5.1 with a title, got %+v", first)
+	}
+	// Natural order: A.5.9 comes before A.5.10
+	if list.Data[8].ControlID != "A.5.9" || list.Data[9].ControlID != "A.5.10" {
+		t.Errorf("unexpected order: %s, %s", list.Data[8].ControlID, list.Data[9].ControlID)
 	}
 }
