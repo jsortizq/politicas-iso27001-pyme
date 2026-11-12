@@ -77,6 +77,34 @@ politicas-iso27001-pyme/
 | **3** | Ejecución del CLI `iso-cli check` en infraestructura | Informe de brechas técnicas |
 | **4** | Revisión de hallazgos, plan de remediación y simulacro de auditoría | Matriz SoA actualizada + evidencia |
 
+### Plataforma web (en desarrollo)
+
+Además del CLI, el repositorio contiene la plataforma SaaS multiempresa: API en Go,
+PostgreSQL con Row-Level Security y frontend en Next.js. Estado actual: Declaración de
+Aplicabilidad (93 controles), inventario de activos y registro de riesgos. Documentos,
+evidencias, auditorías, SSO (OIDC) y el copiloto de IA aún no están implementados.
+Arquitectura: [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
+
+```bash
+cp .env.example .env     # configuración de desarrollo
+make up                  # PostgreSQL, Redis y MinIO (Docker)
+make migrate             # migraciones + catálogo de 93 controles
+make dev                 # API en http://localhost:8080
+make web                 # frontend en http://localhost:3000 (otra terminal)
+```
+
+Entra en http://localhost:3000/login con cualquier correo y contraseña: el login de
+desarrollo (`AUTH_DEV_MODE=true`) no valida credenciales, así que **no lo actives en
+un servidor accesible desde internet**.
+
+- `make test` ejecuta las pruebas unitarias; `make test-db` añade las de integración
+  contra PostgreSQL (aislamiento entre empresas, RLS, registro de auditoría).
+- Sin `DATABASE_URL` la API guarda los datos en memoria y se pierden al reiniciar.
+- La API debe conectarse con un rol sin superusuario (`sgsi_app`); si no, se niega a
+  arrancar porque PostgreSQL ignoraría las políticas RLS.
+- El frontend lee `API_URL` al compilar o al iniciar `npm run dev` (por defecto
+  `http://localhost:8080`).
+
 ### Uso del CLI
 
 #### Instalación

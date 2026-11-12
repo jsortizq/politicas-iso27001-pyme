@@ -346,6 +346,24 @@ Cada tarea se acepta cuando cumple:
 
 ---
 
+## Estado de implementación (2026-11-12)
+
+| Área                                   | Estado                                              |
+|----------------------------------------|-----------------------------------------------------|
+| Catálogo de 93 controles               | Hecho (`catalog/`, tabla `control_catalog`)         |
+| Multiempresa con RLS                   | Hecho, con pruebas de acceso cruzado en PostgreSQL  |
+| SoA, activos y riesgos (API + web)     | Hecho                                               |
+| Registro de auditoría                  | Se escribe en cada cambio; aún sin pantalla ni API  |
+| Autenticación                          | Solo login de desarrollo; OIDC pendiente            |
+| Usuarios, invitaciones y organizaciones| Pendiente (el rol viene de la sesión de desarrollo) |
+| Documentos y evidencias (S3)           | Pendiente                                           |
+| Auditorías internas e informes         | Pendiente (tablas creadas, sin API)                 |
+| Workers (Redis) y copiloto IA          | Pendiente                                           |
+
+Diferencias con la estructura objetivo de la sección 4: los paquetes viven en
+`internal/{api,auth,database,tenant,...}` en lugar de `internal/platform` e
+`internal/modules`, y las tablas usan `tenant_id` en lugar de `organization_id`.
+
 ## Registro de decisiones (ADR)
 
 Las decisiones de arquitectura se documentan en archivos individuales
