@@ -44,6 +44,10 @@ type SoAStore interface {
 	List(ctx context.Context, tenantID string) ([]SoAEntry, error)
 	Get(ctx context.Context, tenantID, id string) (*SoAEntry, error)
 	Create(ctx context.Context, entry *SoAEntry) error // assigns entry.ID
+	// CreateMissing adds, as one operation, the entries whose control the
+	// tenant does not have yet and returns how many were added. Existing
+	// assessments are never touched.
+	CreateMissing(ctx context.Context, tenantID string, entries []SoAEntry) (int, error)
 	Update(ctx context.Context, entry *SoAEntry) error
 	Delete(ctx context.Context, tenantID, id string) error
 }
@@ -161,45 +165,33 @@ func (h *SoAHandler) handleInitialize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	existing, err := h.store.List(r.Context(), tenantID)
-	if err != nil {
-		h.logger.Error("soa initialize failed", "error", err, "tenant", tenantID)
-		writeError(w, http.StatusInternalServerError, "failed to initialize SoA")
-		return
-	}
-	have := make(map[string]bool, len(existing))
-	for _, e := range existing {
-		have[e.ControlID] = true
-	}
-
-	created := 0
 	now := time.Now().UTC()
+	entries := make([]SoAEntry, 0, len(controls))
 	for _, c := range controls {
-		if have[c.ID] {
-			continue
-		}
-		entry := SoAEntry{
+		entries = append(entries, SoAEntry{
 			TenantID:   tenantID,
 			ControlID:  c.ID,
 			Applicable: true,
 			CreatedAt:  now,
 			UpdatedAt:  now,
-		}
-		err := h.store.Create(r.Context(), &entry)
-		if errors.Is(err, ErrConflict) {
-			continue // created concurrently
-		}
-		if err != nil {
-			h.logger.Error("soa initialize failed", "error", err, "tenant", tenantID, "control", c.ID)
-			writeError(w, http.StatusInternalServerError, "failed to initialize SoA")
-			return
-		}
-		created++
+		})
+	}
+	created, err := h.store.CreateMissing(r.Context(), tenantID, entries)
+	if err != nil {
+		h.logger.Error("soa initialize failed", "error", err, "tenant", tenantID)
+		writeError(w, http.StatusInternalServerError, "failed to initialize SoA")
+		return
+	}
+	all, err := h.store.List(r.Context(), tenantID)
+	if err != nil {
+		h.logger.Error("soa initialize failed", "error", err, "tenant", tenantID)
+		writeError(w, http.StatusInternalServerError, "failed to initialize SoA")
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]int{
 		"created": created,
-		"total":   len(existing) + created,
+		"total":   len(all),
 	})
 }
 
@@ -400,6 +392,21 @@ func (m *MemorySoAStore) Create(_ context.Context, entry *SoAEntry) error {
 	return m.t.insert(entry.TenantID, entry.ID, *entry, func(existing SoAEntry) bool {
 		return existing.ControlID == entry.ControlID
 	})
+}
+
+func (m *MemorySoAStore) CreateMissing(ctx context.Context, _ string, entries []SoAEntry) (int, error) {
+	created := 0
+	for i := range entries {
+		err := m.Create(ctx, &entries[i])
+		if errors.Is(err, ErrConflict) {
+			continue
+		}
+		if err != nil {
+			return created, err
+		}
+		created++
+	}
+	return created, nil
 }
 
 func (m *MemorySoAStore) Update(_ context.Context, entry *SoAEntry) error {

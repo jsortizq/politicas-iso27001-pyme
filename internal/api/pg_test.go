@@ -76,6 +76,22 @@ func TestPg_SoALifecycle(t *testing.T) {
 		t.Errorf("derived statuses: %s / %s", impl, eff)
 	}
 
+	// Loading the catalog is one audited operation, not 93, and repeating
+	// it adds nothing.
+	again := decode[map[string]int](t, doAs(h, pgTenantA, http.MethodPost, "/v1/soa/initialize", ""))
+	if again["created"] != 0 || again["total"] != 93 {
+		t.Errorf("second initialize: %v", again)
+	}
+	var initEvents, controls int
+	if err := dbs.Admin.QueryRow(
+		`SELECT count(*), COALESCE(sum((detail->>'controls')::int), 0) FROM audit_log WHERE action = 'soa.initialize'`,
+	).Scan(&initEvents, &controls); err != nil {
+		t.Fatal(err)
+	}
+	if initEvents != 1 || controls != 93 {
+		t.Errorf("expected one soa.initialize event for 93 controls, got %d events / %d controls", initEvents, controls)
+	}
+
 	sum := decode[SoASummary](t, doAs(h, pgTenantA, http.MethodGet, "/v1/soa/summary", ""))
 	if sum.TotalControls != 93 || sum.Implemented != 1 || sum.NotImplemented != 92 {
 		t.Errorf("unexpected summary: %+v", sum)

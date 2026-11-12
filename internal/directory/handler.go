@@ -177,9 +177,11 @@ func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 	case errors.Is(err, ErrNotFound):
 		writeError(w, http.StatusNotFound, "member not found")
 	case errors.Is(err, ErrConflict):
-		writeError(w, http.StatusConflict, "a member with this email already exists")
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "a member with this email already exists", "code": "member_exists"})
 	case errors.Is(err, ErrLastOwner):
-		writeError(w, http.StatusConflict, "the organization must keep at least one owner")
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "the organization must keep at least one owner", "code": "last_owner"})
 	default:
 		h.logger.Error("directory: "+what+" failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

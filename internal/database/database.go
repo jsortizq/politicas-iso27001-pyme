@@ -134,9 +134,10 @@ func Audit(ctx context.Context, tx *sql.Tx, tenantID string, actor Actor, action
 	if err != nil {
 		return fmt.Errorf("audit: encode detail: %w", err)
 	}
+	// entityID is empty for operations that affect many records at once.
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO audit_log (tenant_id, action, entity_type, entity_id, detail)
-		 VALUES ($1, $2, $3, $4, $5)`,
+		 VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5)`,
 		tenantID, action, entityType, entityID, string(body))
 	if err != nil {
 		return fmt.Errorf("audit: insert: %w", err)

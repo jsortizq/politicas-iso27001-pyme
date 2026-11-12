@@ -182,6 +182,42 @@ func (s *PgSoAStore) Create(ctx context.Context, e *SoAEntry) error {
 	})
 }
 
+// CreateMissing inserts the missing entries in one transaction and records
+// a single audit event for the whole operation.
+func (s *PgSoAStore) CreateMissing(ctx context.Context, tenantID string, entries []SoAEntry) (int, error) {
+	created := 0
+	err := database.TenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT INTO soa_entries (tenant_id, control_id, applicable, justification,
+				implementation_status, implementation_pct, effectiveness, effectiveness_pct)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			ON CONFLICT (tenant_id, control_id) DO NOTHING`)
+		if err != nil {
+			return err
+		}
+		defer stmt.Close()
+		for _, e := range entries {
+			res, err := stmt.ExecContext(ctx, tenantID, e.ControlID, e.Applicable, e.Justification,
+				implementationStatus(e.ImplementationPct), e.ImplementationPct,
+				effectivenessStatus(e.EffectivenessPct), e.EffectivenessPct)
+			if err != nil {
+				return pgErr(err)
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				created++
+			}
+		}
+		if created == 0 {
+			return nil
+		}
+		return audit(ctx, tx, tenantID, "soa.initialize", "soa_entry", "", map[string]any{"controls": created})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return created, nil
+}
+
 func (s *PgSoAStore) Update(ctx context.Context, e *SoAEntry) error {
 	if err := validID(e.ID); err != nil {
 		return err
