@@ -11,6 +11,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -103,6 +104,42 @@ func EnsureTenant(ctx context.Context, db *sql.DB, tenantID, name string) error 
 		tenantID, name, "org-"+strings.ToLower(tenantID))
 	if err != nil {
 		return fmt.Errorf("database: ensure tenant: %w", err)
+	}
+	return nil
+}
+
+// ── Audit trail ──
+
+// Actor is who performed an audited operation.
+type Actor struct {
+	Email string
+	Role  string
+}
+
+// Audit appends a record to audit_log within tx, so the change and its
+// record commit or roll back together. tx must be a tenant transaction.
+func Audit(ctx context.Context, tx *sql.Tx, tenantID string, actor Actor, action, entityType, entityID string, detail map[string]any) error {
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	detail["actor"] = actor.Email
+	if actor.Email == "" {
+		detail["actor"] = "system"
+	}
+	if actor.Role != "" {
+		detail["role"] = actor.Role
+	}
+	detail["origin"] = "api"
+	body, err := json.Marshal(detail)
+	if err != nil {
+		return fmt.Errorf("audit: encode detail: %w", err)
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO audit_log (tenant_id, action, entity_type, entity_id, detail)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		tenantID, action, entityType, entityID, string(body))
+	if err != nil {
+		return fmt.Errorf("audit: insert: %w", err)
 	}
 	return nil
 }

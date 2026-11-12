@@ -30,7 +30,7 @@ func testServer(t *testing.T) *Server {
 // login opens a dev session and returns its bearer token.
 func login(t *testing.T, s *Server, tenantID, role string) string {
 	t.Helper()
-	body := fmt.Sprintf(`{"email":"user@empresa.test","password":"x","tenant_id":%q,"role":%q}`, tenantID, role)
+	body := fmt.Sprintf(`{"email":"%s@empresa.test","password":"x","tenant_id":%q,"role":%q}`, role, tenantID, role)
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
 	rr := httptest.NewRecorder()
 	s.http.Handler.ServeHTTP(rr, req)
@@ -237,5 +237,60 @@ func TestRecoverMiddleware(t *testing.T) {
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500 after panic, got %d", rr.Code)
+	}
+}
+
+func TestAPI_MembersAndAuditEndpointsAreWired(t *testing.T) {
+	s := testServer(t)
+	owner := login(t, s, tenantA, "owner")
+
+	rr := call(s, owner, http.MethodPost, "/api/v1/users", `{"email":"nuevo@empresa.test","role":"editor"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("invite: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr := call(s, owner, http.MethodGet, "/api/v1/users", ""); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"count":2`) {
+		t.Errorf("list members: %d %s", rr.Code, rr.Body.String())
+	}
+	// Members of another organization are not visible.
+	other := login(t, s, tenantB, "owner")
+	if rr := call(s, other, http.MethodGet, "/api/v1/users", ""); !strings.Contains(rr.Body.String(), `"count":1`) {
+		t.Errorf("tenant B sees foreign members: %s", rr.Body.String())
+	}
+
+	// Without a database the audit trail is not recorded, and says so.
+	rr = call(s, owner, http.MethodGet, "/api/v1/audit-log", "")
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"recorded":false`) {
+		t.Errorf("audit log: %d %s", rr.Code, rr.Body.String())
+	}
+	editor := login(t, s, tenantA, "editor")
+	if rr := call(s, editor, http.MethodGet, "/api/v1/audit-log", ""); rr.Code != http.StatusForbidden {
+		t.Errorf("editor reading the audit trail: expected 403, got %d", rr.Code)
+	}
+}
+
+func TestOrigin_CrossSiteWritesAreRejected(t *testing.T) {
+	t.Setenv("APP_URL", "https://sgsi.example.com")
+	t.Setenv("CORS_ORIGINS", "https://sgsi.example.com, http://localhost:3000")
+	s := testServer(t)
+	token := login(t, s, tenantA, "admin")
+	body := `{"name":"ERP","asset_type":"software"}`
+
+	if rr := call(s, token, http.MethodPost, "/api/v1/assets", body, "Origin", "https://evil.example"); rr.Code != http.StatusForbidden {
+		t.Errorf("cross-site POST: expected 403, got %d", rr.Code)
+	}
+	if rr := call(s, "", http.MethodPost, "/auth/logout", "", "Origin", "https://evil.example"); rr.Code != http.StatusForbidden {
+		t.Errorf("cross-site logout: expected 403, got %d", rr.Code)
+	}
+	for _, origin := range []string{"https://sgsi.example.com", "http://localhost:3000"} {
+		if rr := call(s, token, http.MethodPost, "/api/v1/assets", strings.Replace(body, "ERP", origin, 1), "Origin", origin); rr.Code != http.StatusCreated {
+			t.Errorf("POST from %s: expected 201, got %d", origin, rr.Code)
+		}
+	}
+	// Reads and clients without an Origin header are unaffected.
+	if rr := call(s, token, http.MethodGet, "/api/v1/assets", "", "Origin", "https://evil.example"); rr.Code != http.StatusOK {
+		t.Errorf("cross-site GET: expected 200, got %d", rr.Code)
+	}
+	if rr := call(s, token, http.MethodPost, "/api/v1/assets", `{"name":"CLI","asset_type":"software"}`); rr.Code != http.StatusCreated {
+		t.Errorf("POST without Origin: expected 201, got %d", rr.Code)
 	}
 }

@@ -6,12 +6,13 @@
 package api
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"sync"
+
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
 )
 
 // Store errors shared by every implementation.
@@ -67,15 +68,7 @@ func writeStoreError(w http.ResponseWriter, err error, what string) (unexpected 
 }
 
 // newUUID returns a random (version 4) UUID.
-func newUUID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("api: crypto/rand unavailable: " + err.Error())
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
+func newUUID() string { return tenant.NewUUID() }
 
 // memTable is a thread-safe in-memory table partitioned by tenant.
 type memTable[T any] struct {

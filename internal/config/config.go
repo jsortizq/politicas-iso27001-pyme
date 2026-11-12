@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -62,13 +63,22 @@ type S3Config struct {
 	SecretKey string
 }
 
-// AuthConfig holds OIDC authentication settings.
+// AuthConfig holds authentication settings.
 type AuthConfig struct {
+	// OIDC single sign-on. It is enabled when Issuer is set.
 	Issuer       string
 	ClientID     string
 	ClientSecret string
-	RedirectURL  string
-	SessionKey   string
+	RedirectURL  string // must be registered at the provider
+	Scopes       []string
+
+	// AppURL is the public URL of the web application. People return to it
+	// after single sign-on, and cookies are marked Secure when it is https.
+	AppURL string
+
+	// AllowSignup lets any signed-in person create a new organization.
+	// Disable it to make the platform invitation-only.
+	AllowSignup bool
 
 	// DevMode enables the development login, which accepts any credentials.
 	// It must be requested explicitly (AUTH_DEV_MODE=true) and is never
@@ -127,8 +137,10 @@ func Load() *Config {
 			Issuer:       env("OIDC_ISSUER", ""),
 			ClientID:     env("OIDC_CLIENT_ID", ""),
 			ClientSecret: env("OIDC_CLIENT_SECRET", ""),
-			RedirectURL:  env("OIDC_REDIRECT_URL", "http://localhost:8080/auth/callback"),
-			SessionKey:   env("SESSION_KEY", "dev-session-key-change-in-production"),
+			RedirectURL:  env("OIDC_REDIRECT_URL", "http://localhost:3000/auth/callback"),
+			Scopes:       strings.Fields(env("OIDC_SCOPES", "openid email profile")),
+			AppURL:       env("APP_URL", "http://localhost:3000"),
+			AllowSignup:  envBool("AUTH_ALLOW_SIGNUP", true),
 			DevMode:      envBool("AUTH_DEV_MODE", false),
 		},
 		AI: AIConfig{

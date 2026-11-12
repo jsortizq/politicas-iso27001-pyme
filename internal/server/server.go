@@ -12,13 +12,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/api"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/auth"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
-	"github.com/jsortizq/politicas-iso27001-pyme/internal/database"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/directory"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/health"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
 )
@@ -70,34 +71,49 @@ func (s *Server) routes() http.Handler {
 		})
 	}
 
+	// ── Stores: PostgreSQL when configured, otherwise in memory ──
+	var (
+		members    directory.Store = directory.NewMemoryStore()
+		soaStore   api.SoAStore    = api.NewMemorySoAStore()
+		assetStore api.AssetStore  = api.NewMemoryAssetStore()
+		riskStore  api.RiskStore   = api.NewMemoryRiskStore()
+		auditStore api.AuditStore  // the audit trail is only recorded in PostgreSQL
+	)
+	if s.db != nil {
+		members = directory.NewPgStore(s.db)
+		soaStore = api.NewPgSoAStore(s.db)
+		assetStore = api.NewPgAssetStore(s.db)
+		riskStore = api.NewPgRiskStore(s.db)
+		auditStore = api.NewPgAuditStore(s.db)
+	}
+
 	// ── Auth routes (no tenant context) ──
 	sessions := auth.NewSessionStore(8 * time.Hour)
-	authHandler := auth.NewHandler(sessions, s.cfg.Auth.DevMode)
-	authHandler.SetSecureCookies(!s.cfg.Auth.DevMode)
-	if s.db != nil {
-		authHandler.SetTenantProvisioner(func(ctx context.Context, tenantID string) error {
-			return database.EnsureTenant(ctx, s.db, tenantID, "Organización de desarrollo")
-		})
-	}
+	authHandler := auth.NewHandler(sessions, members, auth.Options{
+		DevMode: s.cfg.Auth.DevMode,
+		OIDC: auth.OIDCConfig{
+			Issuer:       s.cfg.Auth.Issuer,
+			ClientID:     s.cfg.Auth.ClientID,
+			ClientSecret: s.cfg.Auth.ClientSecret,
+			RedirectURL:  s.cfg.Auth.RedirectURL,
+			Scopes:       s.cfg.Auth.Scopes,
+		},
+		AppURL:        s.cfg.Auth.AppURL,
+		SecureCookies: strings.HasPrefix(s.cfg.Auth.AppURL, "https://"),
+		AllowSignup:   s.cfg.Auth.AllowSignup,
+		Logger:        s.logger,
+	})
 	authHandler.Register(mux)
 
 	// ── API v1 routes (authenticated, tenant-scoped) ──
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /v1/info", s.handleInfo)
 
-	var (
-		soaStore   api.SoAStore   = api.NewMemorySoAStore()
-		assetStore api.AssetStore = api.NewMemoryAssetStore()
-		riskStore  api.RiskStore  = api.NewMemoryRiskStore()
-	)
-	if s.db != nil {
-		soaStore = api.NewPgSoAStore(s.db)
-		assetStore = api.NewPgAssetStore(s.db)
-		riskStore = api.NewPgRiskStore(s.db)
-	}
 	api.NewSoAHandler(soaStore, s.logger).Register(apiMux)
 	api.NewAssetHandler(assetStore, s.logger).Register(apiMux)
 	api.NewRiskHandler(riskStore, s.logger).Register(apiMux)
+	api.NewAuditHandler(auditStore, s.logger).Register(apiMux)
+	directory.NewHandler(members, s.logger).Register(apiMux)
 
 	// Order matters: the session decides the tenant (auth overwrites the
 	// X-Tenant-ID header), then the role decides whether writes are allowed.
@@ -113,6 +129,7 @@ func (s *Server) routes() http.Handler {
 	// Apply global middleware
 	var handler http.Handler = mux
 	handler = s.recoverMiddleware(handler)
+	handler = s.originMiddleware(handler)
 	handler = s.corsMiddleware(handler)
 	handler = s.requestLogMiddleware(handler)
 
@@ -204,6 +221,33 @@ func (s *Server) requestLogMiddleware(next http.Handler) http.Handler {
 			"duration_ms", time.Since(start).Milliseconds(),
 			"remote_addr", r.RemoteAddr,
 		)
+	})
+}
+
+// originMiddleware rejects state-changing requests that a browser sends
+// from another site. The session cookie is SameSite=Lax, which already
+// keeps it off cross-site POST/PUT/DELETE; this is a second, independent
+// check. Requests without an Origin header (CLI tools, server-to-server)
+// are not affected.
+func (s *Server) originMiddleware(next http.Handler) http.Handler {
+	allowed := map[string]bool{strings.TrimRight(s.cfg.Auth.AppURL, "/"): true}
+	for _, origin := range strings.Split(s.cfg.Server.CORSOrigins, ",") {
+		if origin = strings.TrimRight(strings.TrimSpace(origin), "/"); origin != "" {
+			allowed[origin] = true
+		}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if origin := r.Header.Get("Origin"); origin != "" && !allowed[strings.TrimRight(origin, "/")] {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"error":"request origin not allowed"}`)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

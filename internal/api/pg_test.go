@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -235,5 +237,67 @@ func TestPg_ConcurrentRiskCodes(t *testing.T) {
 	}
 	if len(risks) != n || len(seen) != n {
 		t.Errorf("expected %d risks with distinct codes, got %d risks / %d codes", n, len(risks), len(seen))
+	}
+}
+
+func TestPg_AuditLogEndpoint(t *testing.T) {
+	dbs := dbtest.New(t)
+	dbtest.Tenant(t, dbs.Admin, pgTenantA, "Empresa A")
+	dbtest.Tenant(t, dbs.Admin, pgTenantB, "Empresa B")
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mux := http.NewServeMux()
+	NewRiskHandler(NewPgRiskStore(dbs.App), logger).Register(mux)
+	NewAuditHandler(NewPgAuditStore(dbs.App), logger).Register(mux)
+	as := func(tenantID, role, method, path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		ctx := auth.WithUser(tenant.WithTenantID(req.Context(), tenantID),
+			&auth.User{Email: role + "@empresa.test", Role: role, TenantID: tenantID})
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req.WithContext(ctx))
+		return rr
+	}
+
+	for i := 0; i < 5; i++ {
+		as(pgTenantA, "admin", http.MethodPost, "/v1/risks", `{"title":"Riesgo","likelihood":2,"impact":2}`)
+	}
+	as(pgTenantB, "admin", http.MethodPost, "/v1/risks", `{"title":"Ajeno","likelihood":1,"impact":1}`)
+
+	type page struct {
+		Data       []AuditEvent `json:"data"`
+		NextBefore int64        `json:"next_before"`
+		Recorded   bool         `json:"recorded"`
+	}
+	first := decode[page](t, as(pgTenantA, "auditor", http.MethodGet, "/v1/audit-log?limit=3", ""))
+	if !first.Recorded || len(first.Data) != 3 || first.NextBefore == 0 {
+		t.Fatalf("first page: %+v", first)
+	}
+	if first.Data[0].ID <= first.Data[1].ID || first.Data[0].Action != "risk.create" || first.Data[0].Actor != "admin@empresa.test" {
+		t.Errorf("events should be newest first with their actor: %+v", first.Data[0])
+	}
+	second := decode[page](t, as(pgTenantA, "auditor", http.MethodGet,
+		"/v1/audit-log?limit=3&before="+strconv.FormatInt(first.NextBefore, 10), ""))
+	if len(second.Data) != 2 || second.NextBefore != 0 {
+		t.Errorf("second page: %+v", second)
+	}
+	// Only this organization's events, across both pages.
+	for _, e := range append(first.Data, second.Data...) {
+		if strings.Contains(string(e.Detail), "Ajeno") {
+			t.Errorf("event of another organization leaked: %+v", e)
+		}
+	}
+	if other := decode[page](t, as(pgTenantB, "owner", http.MethodGet, "/v1/audit-log", "")); len(other.Data) != 1 {
+		t.Errorf("tenant B should see exactly its own event: %+v", other.Data)
+	}
+
+	for _, role := range []string{"editor", "viewer"} {
+		if rr := as(pgTenantA, role, http.MethodGet, "/v1/audit-log", ""); rr.Code != http.StatusForbidden {
+			t.Errorf("%s reading the audit trail: expected 403, got %d", role, rr.Code)
+		}
+	}
+	for _, q := range []string{"limit=0", "limit=x", "before=-1"} {
+		if rr := as(pgTenantA, "owner", http.MethodGet, "/v1/audit-log?"+q, ""); rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d", q, rr.Code)
+		}
 	}
 }
