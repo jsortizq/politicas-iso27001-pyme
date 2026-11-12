@@ -21,21 +21,24 @@
     --radius: 0.5rem;
   }
 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: 222.2 84% 4.9%;
+      --foreground: 210 40% 98%;
+      --card: 222.2 84% 4.9%;
+      --card-foreground: 210 40% 98%;
+      --primary: 217.2 91.2% 59.8%;
+      --primary-foreground: 222.2 47.4% 11.2%;
+      --secondary: 217.2 32.6% 17.5%;
+      --secondary-foreground: 210 40% 98%;
+      --muted: 217.2 32.6% 17.5%;
+      --muted-foreground: 215 20.2% 65.1%;
+      --accent: 217.2 32.6% 17.5%;
+      --accent-foreground: 210 40% 98%;
+      --border: 217.2 32.6% 17.5%;
+      --ring: 224.3 76.3% 48%;
+      color-scheme: dark;
+    }
   }
 }
 
@@ -46,10 +49,37 @@
   body {
     @apply bg-background text-foreground;
   }
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-1 ring-offset-background;
+  }
 }
 
 /* Custom utility for compliance status badges */
 @layer components {
+  .input {
+    @apply block h-10 w-full rounded-md border border-border bg-background px-3 text-sm placeholder:text-muted-foreground disabled:opacity-60;
+  }
+  textarea.input {
+    @apply h-auto py-2;
+  }
+  .btn {
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply bg-primary text-primary-foreground shadow hover:bg-primary/90;
+  }
+  .btn-outline {
+    @apply border border-border hover:bg-accent hover:text-accent-foreground;
+  }
+  .btn-danger {
+    @apply border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40;
+  }
+  .badge {
+    @apply inline-flex items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+  .badge-critical {
+    @apply bg-red-600 text-white;
+  }
   .badge-full {
     @apply bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400;
   }

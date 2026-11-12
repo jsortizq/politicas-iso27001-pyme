@@ -23,12 +23,6 @@ export default function HomePage() {
           >
             Iniciar Sesión
           </Link>
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center justify-center rounded-md border border-border px-8 py-3 text-sm font-medium shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
-          >
-            Dashboard Demo
-          </Link>
         </div>
 
         <div className="pt-8 grid grid-cols-1 sm:grid-cols-3 gap-6 text-left">

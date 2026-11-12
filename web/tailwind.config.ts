@@ -1,28 +1,27 @@
 import type { Config } from 'tailwindcss';
 
+// Semantic colors come from the CSS variables in app/globals.css, which
+// switch with the operating system's light/dark preference.
+const token = (name: string) => `hsl(var(--${name}) / <alpha-value>)`;
+
 const config: Config = {
   content: [
     './app/**/*.{js,ts,jsx,tsx,mdx}',
     './components/**/*.{js,ts,jsx,tsx,mdx}',
   ],
-  darkMode: 'class',
+  darkMode: 'media',
   theme: {
     extend: {
       colors: {
-        // SGSI brand colors
-        primary: {
-          50: '#eff6ff',
-          100: '#dbeafe',
-          200: '#bfdbfe',
-          300: '#93c5fd',
-          400: '#60a5fa',
-          500: '#3b82f6',
-          600: '#2563eb',
-          700: '#1d4ed8',
-          800: '#1e40af',
-          900: '#1e3a8a',
-          950: '#172554',
-        },
+        background: token('background'),
+        foreground: token('foreground'),
+        border: token('border'),
+        ring: token('ring'),
+        card: { DEFAULT: token('card'), foreground: token('card-foreground') },
+        primary: { DEFAULT: token('primary'), foreground: token('primary-foreground') },
+        secondary: { DEFAULT: token('secondary'), foreground: token('secondary-foreground') },
+        muted: { DEFAULT: token('muted'), foreground: token('muted-foreground') },
+        accent: { DEFAULT: token('accent'), foreground: token('accent-foreground') },
         // Compliance status colors
         compliance: {
           full: '#22c55e',

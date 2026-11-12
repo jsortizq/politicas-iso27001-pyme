@@ -1,180 +1,151 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { assetsApi, risksApi, soaApi, type RiskRating } from '@/lib/api';
+import { useResource } from '@/lib/useResource';
+import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner } from '@/components/ui/feedback';
 
-interface SoASummary {
-  total_controls: number;
-  applicable: number;
-  not_applicable: number;
-  implemented: number;
-  partial: number;
-  not_implemented: number;
-  avg_implementation_pct: number;
-  avg_effectiveness_pct: number;
-  compliance_score_pct: number;
-}
+const loadOverview = async () => {
+  const [summary, risks, assets] = await Promise.all([
+    soaApi.summary(),
+    risksApi.list(),
+    assetsApi.list(),
+  ]);
+  return { summary, risks: risks.data, assets: assets.data };
+};
 
-function StatusBadge({ value, label }: { value: number; label: string }) {
-  let colorClass = 'badge-na';
-  if (value >= 80) colorClass = 'badge-full';
-  else if (value >= 40) colorClass = 'badge-partial';
-  else if (value > 0) colorClass = 'badge-none';
+const ratingLabels: Record<RiskRating, string> = {
+  critical: 'Críticos',
+  high: 'Altos',
+  medium: 'Medios',
+  low: 'Bajos',
+};
 
-  return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${colorClass}`}>
-      {label}: {value.toFixed(1)}%
-    </span>
-  );
-}
+const ratingColors: Record<RiskRating, string> = {
+  critical: 'bg-red-600',
+  high: 'bg-orange-500',
+  medium: 'bg-amber-400',
+  low: 'bg-green-500',
+};
 
 export default function DashboardPage() {
-  const [summary, setSummary] = useState<SoASummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, error, loading, reload } = useResource(loadOverview);
 
-  useEffect(() => {
-    async function fetchSummary() {
-      try {
-        const res = await fetch('/api/v1/soa/summary', {
-          headers: { 'X-Tenant-ID': 'demo-tenant-00000000-0000-0000-0000-000000000000' },
-        });
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        const data = await res.json();
-        setSummary(data);
-      } catch (err) {
-        setError('No se pudo conectar al API. Mostrando datos de ejemplo.');
-        // Demo data when API is not available
-        setSummary({
-          total_controls: 93,
-          applicable: 87,
-          not_applicable: 6,
-          implemented: 14,
-          partial: 45,
-          not_implemented: 28,
-          avg_implementation_pct: 42.5,
-          avg_effectiveness_pct: 35.2,
-          compliance_score_pct: 38.85,
-        });
-      } finally {
-        setLoading(false);
-      }
-    }
-    fetchSummary();
-  }, []);
+  if (loading) return <Spinner />;
+  if (error || !data) return <ErrorBanner message={error ?? 'Sin datos.'} onRetry={reload} />;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    );
-  }
-
-  if (!summary) return null;
+  const { summary, risks, assets } = data;
+  const openRisks = risks.filter((r) => r.status !== 'closed');
+  const byRating = (rating: RiskRating) => openRisks.filter((r) => r.risk_rating === rating).length;
+  const criticalAssets = assets.filter((a) => a.status === 'active' && a.criticality >= 4).length;
 
   const cards = [
-    { title: 'Controles Totales', value: summary.total_controls, sub: `${summary.applicable} aplicables` },
-    { title: 'Implementados', value: summary.implemented, sub: `${summary.partial} parciales` },
-    { title: 'Sin Implementar', value: summary.not_implemented, sub: `${summary.not_applicable} N/A` },
-    { title: 'Score Cumplimiento', value: `${summary.compliance_score_pct.toFixed(1)}%`, sub: 'Promedio general' },
+    {
+      title: 'Cumplimiento',
+      value: `${summary.compliance_score_pct.toFixed(1)}%`,
+      sub: 'Promedio de implementación y efectividad',
+      href: '/dashboard/soa',
+    },
+    {
+      title: 'Controles implementados',
+      value: `${summary.implemented} / ${summary.applicable}`,
+      sub: `${summary.partial} parciales · ${summary.not_implemented} sin iniciar`,
+      href: '/dashboard/soa',
+    },
+    {
+      title: 'Riesgos abiertos',
+      value: openRisks.length,
+      sub: `${byRating('critical')} críticos · ${byRating('high')} altos`,
+      href: '/dashboard/risks',
+    },
+    {
+      title: 'Activos',
+      value: assets.length,
+      sub: `${criticalAssets} de criticidad alta`,
+      href: '/dashboard/assets',
+    },
   ];
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard SGSI</h1>
-        <p className="text-muted-foreground">
-          Estado general del Sistema de Gestión de Seguridad de la Información
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard SGSI"
+        subtitle="Estado general del Sistema de Gestión de Seguridad de la Información"
+      />
 
-      {error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-4">
-          <p className="text-sm text-amber-800 dark:text-amber-400">{error}</p>
-        </div>
+      {summary.total_controls === 0 && (
+        <EmptyState
+          title="Aún no hay controles evaluados"
+          action={
+            <Link href="/dashboard/soa" className="btn btn-primary">
+              Ir a Controles SoA
+            </Link>
+          }
+        >
+          Carga los 93 controles del Anexo A de ISO/IEC 27001:2022 para empezar tu Declaración de
+          Aplicabilidad.
+        </EmptyState>
       )}
 
-      {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
-          <div key={card.title} className="rounded-lg border p-6 space-y-2">
+          <Link
+            key={card.title}
+            href={card.href}
+            className="space-y-2 rounded-lg border p-6 transition-colors hover:bg-accent/50"
+          >
             <p className="text-sm font-medium text-muted-foreground">{card.title}</p>
-            <p className="text-3xl font-bold">{card.value}</p>
+            <p className="text-3xl font-bold tabular-nums">{card.value}</p>
             <p className="text-xs text-muted-foreground">{card.sub}</p>
-          </div>
+          </Link>
         ))}
       </div>
 
-      {/* Progress bars */}
-      <div className="grid gap-6 md:grid-cols-2">
-        <div className="rounded-lg border p-6 space-y-4">
-          <h3 className="font-semibold">Implementación</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span>Progreso general</span>
-              <StatusBadge value={summary.avg_implementation_pct} label="Impl" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <section className="space-y-5 rounded-lg border p-6">
+          <h2 className="font-semibold">Controles aplicables</h2>
+          {[
+            { label: 'Implementación promedio', value: summary.avg_implementation_pct },
+            { label: 'Efectividad promedio', value: summary.avg_effectiveness_pct },
+          ].map((row) => (
+            <div key={row.label} className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>{row.label}</span>
+                <span className="tabular-nums text-muted-foreground">{row.value.toFixed(1)}%</span>
+              </div>
+              <ProgressBar value={row.value} />
             </div>
-            <div className="w-full bg-secondary rounded-full h-3">
-              <div
-                className="bg-primary h-3 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(summary.avg_implementation_pct, 100)}%` }}
-              />
-            </div>
-          </div>
-        </div>
+          ))}
+          <p className="text-xs text-muted-foreground">
+            {summary.applicable} aplicables · {summary.not_applicable} no aplicables ·{' '}
+            {summary.total_controls} en total
+          </p>
+        </section>
 
-        <div className="rounded-lg border p-6 space-y-4">
-          <h3 className="font-semibold">Efectividad</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between text-sm">
-              <span>Efectividad promedio</span>
-              <StatusBadge value={summary.avg_effectiveness_pct} label="Efect" />
-            </div>
-            <div className="w-full bg-secondary rounded-full h-3">
-              <div
-                className="bg-green-500 h-3 rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(summary.avg_effectiveness_pct, 100)}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Distribution chart placeholder */}
-      <div className="rounded-lg border p-6 space-y-4">
-        <h3 className="font-semibold">Distribución de Controles</h3>
-        <div className="flex gap-2 h-8">
-          {summary.applicable > 0 && (
-            <>
-              <div
-                className="bg-green-500 rounded-l transition-all"
-                style={{ width: `${(summary.implemented / summary.applicable) * 100}%` }}
-                title={`Implementados: ${summary.implemented}`}
-              />
-              <div
-                className="bg-amber-500 transition-all"
-                style={{ width: `${(summary.partial / summary.applicable) * 100}%` }}
-                title={`Parciales: ${summary.partial}`}
-              />
-              <div
-                className="bg-red-500 rounded-r transition-all"
-                style={{ width: `${(summary.not_implemented / summary.applicable) * 100}%` }}
-                title={`Sin implementar: ${summary.not_implemented}`}
-              />
-            </>
+        <section className="space-y-4 rounded-lg border p-6">
+          <h2 className="font-semibold">Riesgos abiertos por nivel</h2>
+          {openRisks.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay riesgos abiertos registrados.</p>
+          ) : (
+            <ul className="space-y-3">
+              {(Object.keys(ratingLabels) as RiskRating[]).map((rating) => {
+                const count = byRating(rating);
+                return (
+                  <li key={rating} className="flex items-center gap-3 text-sm">
+                    <span className="w-16">{ratingLabels[rating]}</span>
+                    <div className="h-2 flex-1 rounded-full bg-secondary">
+                      <div
+                        className={`${ratingColors[rating]} h-2 rounded-full`}
+                        style={{ width: `${(count / openRisks.length) * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-6 text-right tabular-nums">{count}</span>
+                  </li>
+                );
+              })}
+            </ul>
           )}
-        </div>
-        <div className="flex gap-6 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-green-500" /> Implementados ({summary.implemented})
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-amber-500" /> Parciales ({summary.partial})
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded bg-red-500" /> Sin implementar ({summary.not_implemented})
-          </span>
-        </div>
+        </section>
       </div>
     </div>
   );

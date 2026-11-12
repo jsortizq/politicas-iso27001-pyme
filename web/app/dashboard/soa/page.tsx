@@ -1,135 +1,376 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { SoAEntry } from '@/lib/api';
+import { useMemo, useState } from 'react';
+import { errorMessage, soaApi, type SoAEntry } from '@/lib/api';
+import { useSession } from '@/lib/session';
+import { useResource } from '@/lib/useResource';
+import {
+  EmptyState,
+  ErrorBanner,
+  Field,
+  PageHeader,
+  Panel,
+  ProgressBar,
+  Spinner,
+} from '@/components/ui/feedback';
 
-// Demo data matching the 93 Annex A controls structure
-const demoEntries: SoAEntry[] = [
-  { id: '1', tenant_id: 'demo', control_id: 'A.5.1', control_title: 'Políticas de seguridad de la información', applicable: true, justification: 'Marco normativo requerido', implementation_pct: 100, implementation_evidence: 'Política marco publicada', effectiveness_pct: 85, effectiveness_evidence: 'Revisión anual completada', responsible_role: 'CISO', created_at: '', updated_at: '' },
-  { id: '2', tenant_id: 'demo', control_id: 'A.5.2', control_title: 'Roles y responsabilidades', applicable: true, justification: 'Organización de seguridad', implementation_pct: 80, implementation_evidence: 'Roles definidos en organigrama', effectiveness_pct: 70, effectiveness_evidence: 'Última revisión hace 6 meses', responsible_role: 'CISO', created_at: '', updated_at: '' },
-  { id: '3', tenant_id: 'demo', control_id: 'A.5.3', control_title: 'Segregación de funciones', applicable: true, justification: 'Prevención de fraude', implementation_pct: 60, implementation_evidence: 'Parcialmente documentado', effectiveness_pct: 50, effectiveness_evidence: 'Pendiente de auditoría', responsible_role: 'HR', created_at: '', updated_at: '' },
-  { id: '4', tenant_id: 'demo', control_id: 'A.6.1', control_title: 'Verificación de antecedentes', applicable: true, justification: 'Requisito contractual', implementation_pct: 100, implementation_evidence: 'Proceso HR establecido', effectiveness_pct: 90, effectiveness_evidence: 'Auditoría Q3 conforme', responsible_role: 'HR', created_at: '', updated_at: '' },
-  { id: '5', tenant_id: 'demo', control_id: 'A.7.1', control_title: 'Perímetro de seguridad física', applicable: false, justification: 'Empresa 100% remota', implementation_pct: 0, implementation_evidence: '', effectiveness_pct: 0, effectiveness_evidence: '', responsible_role: 'N/A', created_at: '', updated_at: '' },
-  { id: '6', tenant_id: 'demo', control_id: 'A.8.1', control_title: 'Dispositivos de usuario', applicable: true, justification: 'Control de endpoints', implementation_pct: 75, implementation_evidence: 'MDM desplegado en 75% de equipos', effectiveness_pct: 60, effectiveness_evidence: 'Falta cobertura en BYOD', responsible_role: 'IT', created_at: '', updated_at: '' },
-  { id: '7', tenant_id: 'demo', control_id: 'A.8.9', control_title: 'Gestión de configuración', applicable: true, justification: 'Hardening de servidores', implementation_pct: 40, implementation_evidence: 'Baselines definidos parcialmente', effectiveness_pct: 30, effectiveness_evidence: 'Sin validación automatizada', responsible_role: 'IT', created_at: '', updated_at: '' },
-  { id: '8', tenant_id: 'demo', control_id: 'A.8.15', control_title: 'Registro de eventos', applicable: true, justification: 'Trazabilidad y detección', implementation_pct: 90, implementation_evidence: 'ELK stack en producción', effectiveness_pct: 80, effectiveness_evidence: 'Alertas configuradas', responsible_role: 'SecOps', created_at: '', updated_at: '' },
-];
+const categories: Record<string, string> = {
+  'A.5': 'Organizacionales',
+  'A.6': 'Personas',
+  'A.7': 'Físicos',
+  'A.8': 'Tecnológicos',
+};
 
-function StatusBadge({ pct }: { pct: number }) {
-  if (pct >= 100) return <span className="badge-full inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium">Completo</span>;
-  if (pct >= 50) return <span className="badge-partial inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium">Parcial</span>;
-  if (pct > 0) return <span className="badge-none inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium">Inicial</span>;
-  return <span className="badge-na inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium">N/A</span>;
+const categoryOf = (controlId: string) => controlId.split('.').slice(0, 2).join('.');
+
+function StatusBadge({ entry }: { entry: SoAEntry }) {
+  if (!entry.applicable) return <span className="badge badge-na">No aplica</span>;
+  if (entry.implementation_pct >= 100) return <span className="badge badge-full">Implementado</span>;
+  if (entry.implementation_pct > 0) return <span className="badge badge-partial">Parcial</span>;
+  return <span className="badge badge-none">Sin iniciar</span>;
 }
 
-function ProgressBar({ value, className = '' }: { value: number; className?: string }) {
-  let color = 'bg-red-500';
-  if (value >= 80) color = 'bg-green-500';
-  else if (value >= 50) color = 'bg-amber-500';
+function EditForm({
+  entry,
+  readOnly,
+  onSaved,
+}: {
+  entry: SoAEntry;
+  readOnly: boolean;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    ...entry,
+    review_date: entry.review_date ? entry.review_date.slice(0, 10) : '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
+    setForm((current) => ({ ...current, [key]: value }));
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!form.applicable && !form.justification.trim()) {
+      setError('Indica por qué el control no aplica: un auditor pedirá esta justificación.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await soaApi.update(entry.id, {
+        ...form,
+        // Percentages are meaningless for an excluded control.
+        implementation_pct: form.applicable ? form.implementation_pct : 0,
+        effectiveness_pct: form.applicable ? form.effectiveness_pct : 0,
+        review_date: form.review_date ? `${form.review_date}T00:00:00Z` : undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setError(errorMessage(err));
+      setSaving(false);
+    }
+  };
 
   return (
-    <div className={`w-full bg-secondary rounded-full h-2 ${className}`}>
-      <div className={`${color} h-2 rounded-full transition-all`} style={{ width: `${Math.min(value, 100)}%` }} />
-    </div>
+    <form onSubmit={handleSubmit} className="space-y-5">
+      <p className="text-sm text-muted-foreground">{entry.control_title}</p>
+      {error && <ErrorBanner message={error} />}
+
+      <fieldset disabled={readOnly || saving} className="space-y-5">
+        <label className="flex items-center gap-3 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={form.applicable}
+            onChange={(e) => set('applicable', e.target.checked)}
+          />
+          Este control aplica a la organización
+        </label>
+
+        <Field
+          label={form.applicable ? 'Justificación de inclusión' : 'Justificación de exclusión'}
+          hint={form.applicable ? undefined : 'Obligatoria cuando el control no aplica.'}
+        >
+          <textarea
+            className="input"
+            rows={3}
+            value={form.justification}
+            onChange={(e) => set('justification', e.target.value)}
+          />
+        </Field>
+
+        {form.applicable && (
+          <>
+            <Field label={`Implementación: ${form.implementation_pct}%`}>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                className="w-full"
+                value={form.implementation_pct}
+                onChange={(e) => set('implementation_pct', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Evidencia de implementación">
+              <textarea
+                className="input"
+                rows={2}
+                value={form.implementation_evidence}
+                onChange={(e) => set('implementation_evidence', e.target.value)}
+              />
+            </Field>
+            <Field
+              label={`Efectividad: ${form.effectiveness_pct}%`}
+              hint="Un control implementado no es automáticamente efectivo: evalúalo por separado."
+            >
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                className="w-full"
+                value={form.effectiveness_pct}
+                onChange={(e) => set('effectiveness_pct', Number(e.target.value))}
+              />
+            </Field>
+            <Field label="Evidencia de efectividad">
+              <textarea
+                className="input"
+                rows={2}
+                value={form.effectiveness_evidence}
+                onChange={(e) => set('effectiveness_evidence', e.target.value)}
+              />
+            </Field>
+          </>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Responsable">
+            <input
+              className="input"
+              value={form.responsible_role}
+              onChange={(e) => set('responsible_role', e.target.value)}
+              placeholder="p. ej. CISO"
+            />
+          </Field>
+          <Field label="Próxima revisión">
+            <input
+              type="date"
+              className="input"
+              value={form.review_date}
+              onChange={(e) => set('review_date', e.target.value)}
+            />
+          </Field>
+        </div>
+      </fieldset>
+
+      {readOnly ? (
+        <p className="text-sm text-muted-foreground">Tu rol es de solo lectura.</p>
+      ) : (
+        <button type="submit" className="btn btn-primary" disabled={saving}>
+          {saving ? 'Guardando…' : 'Guardar evaluación'}
+        </button>
+      )}
+    </form>
   );
 }
 
 export default function SoAPage() {
-  const [entries, setEntries] = useState<SoAEntry[]>([]);
+  const { canWrite } = useSession();
+  const { data, error, loading, reload } = useResource(soaApi.list);
   const [filter, setFilter] = useState<'all' | 'applicable' | 'not_applicable'>('all');
+  const [category, setCategory] = useState('all');
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<SoAEntry | null>(null);
+  const [initializing, setInitializing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // TODO: Replace with API call when backend is connected
-    setEntries(demoEntries);
-  }, []);
+  const entries = useMemo(() => data?.data ?? [], [data]);
 
-  const filtered = entries.filter((e) => {
-    if (filter === 'applicable') return e.applicable;
-    if (filter === 'not_applicable') return !e.applicable;
-    return true;
-  });
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return entries.filter((e) => {
+      if (filter === 'applicable' && !e.applicable) return false;
+      if (filter === 'not_applicable' && e.applicable) return false;
+      if (category !== 'all' && categoryOf(e.control_id) !== category) return false;
+      if (q && !`${e.control_id} ${e.control_title ?? ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [entries, filter, category, query]);
+
+  const initialize = async () => {
+    setInitializing(true);
+    setActionError(null);
+    try {
+      await soaApi.initialize();
+      await reload();
+    } catch (err) {
+      setActionError(errorMessage(err));
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  if (loading) return <Spinner />;
+  if (error) return <ErrorBanner message={error} onRetry={reload} />;
+
+  const missing = 93 - entries.length;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Statement of Applicability</h1>
-          <p className="text-muted-foreground">
-            Evaluación de controles ISO 27001:2022 Annex A
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {(['all', 'applicable', 'not_applicable'] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
-                filter === f
-                  ? 'bg-primary text-primary-foreground'
-                  : 'border hover:bg-accent'
-              }`}
-            >
-              {f === 'all' ? 'Todos' : f === 'applicable' ? 'Aplicables' : 'No Aplicables'}
+      <PageHeader
+        title="Declaración de Aplicabilidad"
+        subtitle="Evaluación de los controles del Anexo A de ISO/IEC 27001:2022"
+        action={
+          canWrite && entries.length > 0 && missing > 0 ? (
+            <button className="btn btn-outline" onClick={initialize} disabled={initializing}>
+              {initializing ? 'Cargando…' : `Añadir ${missing} controles faltantes`}
             </button>
-          ))}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
-      {/* Table */}
-      <div className="rounded-lg border overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">Control</th>
-                <th className="text-left px-4 py-3 font-medium hidden md:table-cell">Título</th>
-                <th className="text-center px-4 py-3 font-medium">Estado</th>
-                <th className="text-center px-4 py-3 font-medium">Impl.</th>
-                <th className="text-center px-4 py-3 font-medium hidden sm:table-cell">Efect.</th>
-                <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Responsable</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((entry) => (
-                <tr key={entry.id} className="border-b hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 font-mono text-xs">{entry.control_id}</td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <span className="line-clamp-1">{entry.control_title}</span>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <StatusBadge pct={entry.applicable ? entry.implementation_pct : -1} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {entry.applicable ? (
-                      <div className="flex items-center gap-2">
-                        <ProgressBar value={entry.implementation_pct} />
-                        <span className="text-xs text-muted-foreground w-8 text-right">{entry.implementation_pct}%</span>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    {entry.applicable ? (
-                      <div className="flex items-center gap-2">
-                        <ProgressBar value={entry.effectiveness_pct} />
-                        <span className="text-xs text-muted-foreground w-8 text-right">{entry.effectiveness_pct}%</span>
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs hidden lg:table-cell">{entry.responsible_role}</td>
-                </tr>
+      {actionError && <ErrorBanner message={actionError} />}
+
+      {entries.length === 0 ? (
+        <EmptyState
+          title="Tu Declaración de Aplicabilidad está vacía"
+          action={
+            canWrite ? (
+              <button className="btn btn-primary" onClick={initialize} disabled={initializing}>
+                {initializing ? 'Cargando…' : 'Cargar los 93 controles'}
+              </button>
+            ) : undefined
+          }
+        >
+          {canWrite
+            ? 'Carga el catálogo del Anexo A. Todos los controles empiezan como aplicables y sin implementar; después evalúa cada uno.'
+            : 'Un administrador debe cargar el catálogo de controles.'}
+        </EmptyState>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <input
+              type="search"
+              className="input lg:max-w-xs"
+              placeholder="Buscar control…"
+              aria-label="Buscar control"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <select
+              className="input lg:max-w-[13rem]"
+              aria-label="Categoría"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            >
+              <option value="all">Todas las categorías</option>
+              {Object.entries(categories).map(([id, name]) => (
+                <option key={id} value={id}>
+                  {id} · {name}
+                </option>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            </select>
+            <div className="flex gap-2">
+              {(['all', 'applicable', 'not_applicable'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  aria-pressed={filter === f}
+                  className={`btn h-9 px-3 ${filter === f ? 'btn-primary' : 'btn-outline'}`}
+                >
+                  {f === 'all' ? 'Todos' : f === 'applicable' ? 'Aplicables' : 'No aplicables'}
+                </button>
+              ))}
+            </div>
+          </div>
 
-      <p className="text-xs text-muted-foreground">
-        Mostrando {filtered.length} de {entries.length} controles • Datos de demostración
-      </p>
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/50 text-left">
+                  <th className="px-4 py-3 font-medium">Control</th>
+                  <th className="hidden px-4 py-3 font-medium sm:table-cell">Estado</th>
+                  <th className="hidden px-4 py-3 font-medium sm:table-cell">Implementación</th>
+                  <th className="hidden px-4 py-3 font-medium md:table-cell">Efectividad</th>
+                  <th className="hidden px-4 py-3 font-medium lg:table-cell">Responsable</th>
+                  <th className="px-4 py-3">
+                    <span className="sr-only">Acciones</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((entry) => (
+                  <tr key={entry.id} className="border-b last:border-0 hover:bg-muted/30">
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs">{entry.control_id}</span>
+                      <span className="block max-w-md">{entry.control_title}</span>
+                      <span className="mt-1.5 block sm:hidden">
+                        <StatusBadge entry={entry} />
+                      </span>
+                    </td>
+                    <td className="hidden px-4 py-3 sm:table-cell">
+                      <StatusBadge entry={entry} />
+                    </td>
+                    {(['implementation_pct', 'effectiveness_pct'] as const).map((key, i) => (
+                      <td
+                        key={key}
+                        className={`hidden w-40 px-4 py-3 ${i === 0 ? 'sm:table-cell' : 'md:table-cell'}`}
+                      >
+                        {entry.applicable ? (
+                          <div className="flex items-center gap-2">
+                            <ProgressBar value={entry[key]} />
+                            <span className="w-9 text-right text-xs tabular-nums text-muted-foreground">
+                              {entry[key]}%
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                    ))}
+                    <td className="hidden px-4 py-3 text-xs lg:table-cell">
+                      {entry.responsible_role || <span className="text-muted-foreground">—</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button className="btn btn-outline h-8 px-3" onClick={() => setEditing(entry)}>
+                        {canWrite ? 'Evaluar' : 'Ver'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
+                      Ningún control coincide con los filtros.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Mostrando {filtered.length} de {entries.length} controles
+          </p>
+        </>
+      )}
+
+      {editing && (
+        <Panel title={`Control ${editing.control_id}`} onClose={() => setEditing(null)}>
+          <EditForm
+            key={editing.id}
+            entry={editing}
+            readOnly={!canWrite}
+            onSaved={() => {
+              setEditing(null);
+              reload();
+            }}
+          />
+        </Panel>
+      )}
     </div>
   );
 }

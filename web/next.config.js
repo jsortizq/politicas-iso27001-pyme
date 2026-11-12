@@ -1,12 +1,15 @@
 /** @type {import('next').NextConfig} */
+
+// The browser only ever talks to this Next.js origin; /api and /auth are
+// proxied to the Go backend. Keeping everything same-origin lets the
+// HttpOnly session cookie work without any cross-site configuration.
+const backend = process.env.API_URL || 'http://localhost:8080';
+
 const nextConfig = {
-  // Proxy API requests to Go backend in development
   async rewrites() {
     return [
-      {
-        source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080'}/api/:path*`,
-      },
+      { source: '/api/:path*', destination: `${backend}/api/:path*` },
+      { source: '/auth/:path*', destination: `${backend}/auth/:path*` },
     ];
   },
 };
