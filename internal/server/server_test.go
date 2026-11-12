@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,14 +13,54 @@ import (
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
 )
 
-func testServer() *Server {
+const (
+	tenantA = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+	tenantB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+)
+
+func testServer(t *testing.T) *Server {
+	t.Helper()
+	t.Setenv("AUTH_DEV_MODE", "true")
+	t.Setenv("DATABASE_URL", "")
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, logger)
+	return New(cfg, logger, nil)
+}
+
+// login opens a dev session and returns its bearer token.
+func login(t *testing.T, s *Server, tenantID, role string) string {
+	t.Helper()
+	body := fmt.Sprintf(`{"email":"user@empresa.test","password":"x","tenant_id":%q,"role":%q}`, tenantID, role)
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil || resp.Token == "" {
+		t.Fatalf("login: no token (%v)", err)
+	}
+	return resp.Token
+}
+
+func call(s *Server, token, method, path, body string, headers ...string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Set(headers[i], headers[i+1])
+	}
+	rr := httptest.NewRecorder()
+	s.http.Handler.ServeHTTP(rr, req)
+	return rr
 }
 
 func TestHealthz(t *testing.T) {
-	s := testServer()
+	s := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rr := httptest.NewRecorder()
 
@@ -30,7 +72,7 @@ func TestHealthz(t *testing.T) {
 }
 
 func TestReadyz(t *testing.T) {
-	s := testServer()
+	s := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rr := httptest.NewRecorder()
 
@@ -42,7 +84,7 @@ func TestReadyz(t *testing.T) {
 }
 
 func TestRoot(t *testing.T) {
-	s := testServer()
+	s := testServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 
@@ -57,37 +99,112 @@ func TestRoot(t *testing.T) {
 	}
 }
 
-func TestAPIInfo_WithTenant(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
-	req.Header.Set("X-Tenant-ID", "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
-	rr := httptest.NewRecorder()
+func TestAPI_RequiresAuthentication(t *testing.T) {
+	s := testServer(t)
 
-	s.http.Handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Errorf("GET /api/v1/info: expected 200, got %d", rr.Code)
+	for _, path := range []string{"/api/v1/info", "/api/v1/soa", "/api/v1/assets", "/api/v1/risks"} {
+		// A client-supplied tenant header must not grant access.
+		rr := call(s, "", http.MethodGet, path, "", "X-Tenant-ID", tenantA)
+		if rr.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s without session: expected 401, got %d", path, rr.Code)
+		}
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "a1b2c3d4-e5f6-7890-abcd-ef1234567890") {
-		t.Errorf("expected tenant ID in body, got %s", body)
+	if rr := call(s, "not-a-real-token", http.MethodGet, "/api/v1/info", ""); rr.Code != http.StatusUnauthorized {
+		t.Errorf("invalid token: expected 401, got %d", rr.Code)
 	}
 }
 
-func TestAPIInfo_WithoutTenant(t *testing.T) {
-	s := testServer()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/info", nil)
-	rr := httptest.NewRecorder()
+func TestAPI_TenantComesFromSessionNotHeader(t *testing.T) {
+	s := testServer(t)
+	token := login(t, s, tenantA, "admin")
 
-	s.http.Handler.ServeHTTP(rr, req)
+	// The client tries to reach another organization by forging the header.
+	rr := call(s, token, http.MethodGet, "/api/v1/info", "", "X-Tenant-ID", tenantB)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/info: expected 200, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, tenantA) || strings.Contains(body, tenantB) {
+		t.Errorf("expected session tenant in body, got %s", body)
+	}
+}
 
-	if rr.Code != http.StatusForbidden {
-		t.Errorf("GET /api/v1/info without tenant: expected 403, got %d", rr.Code)
+func TestAPI_EndToEndIsolationBetweenSessions(t *testing.T) {
+	s := testServer(t)
+	a := login(t, s, tenantA, "admin")
+	b := login(t, s, tenantB, "admin")
+
+	rr := call(s, a, http.MethodPost, "/api/v1/risks", `{"title":"Ransomware","likelihood":4,"impact":5}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create risk: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var risk struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(rr.Body).Decode(&risk)
+
+	if rr := call(s, b, http.MethodGet, "/api/v1/risks/"+risk.ID, "", "X-Tenant-ID", tenantA); rr.Code != http.StatusNotFound {
+		t.Errorf("tenant B reading tenant A's risk: expected 404, got %d", rr.Code)
+	}
+	if rr := call(s, b, http.MethodGet, "/api/v1/risks", ""); !strings.Contains(rr.Body.String(), `"count":0`) {
+		t.Errorf("tenant B should list no risks, got %s", rr.Body.String())
+	}
+	if rr := call(s, a, http.MethodGet, "/api/v1/risks/"+risk.ID, ""); rr.Code != http.StatusOK {
+		t.Errorf("tenant A reading its risk: expected 200, got %d", rr.Code)
+	}
+}
+
+func TestAPI_ReadOnlyRolesCannotWrite(t *testing.T) {
+	s := testServer(t)
+	admin := login(t, s, tenantA, "admin")
+	rr := call(s, admin, http.MethodPost, "/api/v1/assets", `{"name":"ERP","asset_type":"software"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("admin create: expected 201, got %d", rr.Code)
+	}
+	var asset struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(rr.Body).Decode(&asset)
+
+	for _, role := range []string{"viewer", "auditor"} {
+		token := login(t, s, tenantA, role)
+		if rr := call(s, token, http.MethodGet, "/api/v1/assets", ""); rr.Code != http.StatusOK {
+			t.Errorf("%s read: expected 200, got %d", role, rr.Code)
+		}
+		writes := map[string][2]string{
+			"POST":   {"/api/v1/assets", `{"name":"x","asset_type":"software"}`},
+			"PUT":    {"/api/v1/assets/" + asset.ID, `{"name":"x","asset_type":"software"}`},
+			"DELETE": {"/api/v1/assets/" + asset.ID, ""},
+		}
+		for method, req := range writes {
+			if rr := call(s, token, method, req[0], req[1]); rr.Code != http.StatusForbidden {
+				t.Errorf("%s %s %s: expected 403, got %d", role, method, req[0], rr.Code)
+			}
+		}
+		if rr := call(s, token, http.MethodPost, "/api/v1/soa/initialize", ""); rr.Code != http.StatusForbidden {
+			t.Errorf("%s initialize SoA: expected 403, got %d", role, rr.Code)
+		}
+	}
+
+	editor := login(t, s, tenantA, "editor")
+	if rr := call(s, editor, http.MethodDelete, "/api/v1/assets/"+asset.ID, ""); rr.Code != http.StatusNoContent {
+		t.Errorf("editor delete: expected 204, got %d", rr.Code)
+	}
+}
+
+func TestLogin_DisabledUnlessDevModeIsExplicit(t *testing.T) {
+	t.Setenv("AUTH_DEV_MODE", "")
+	t.Setenv("OIDC_ISSUER", "")
+	s := New(config.Load(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+
+	rr := call(s, "", http.MethodPost, "/auth/login", fmt.Sprintf(`{"email":"a@b.com","tenant_id":%q}`, tenantA))
+	if rr.Code != http.StatusNotImplemented {
+		t.Errorf("login without AUTH_DEV_MODE: expected 501, got %d", rr.Code)
 	}
 }
 
 func TestCORS_Preflight(t *testing.T) {
-	s := testServer()
+	s := testServer(t)
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/info", nil)
 	rr := httptest.NewRecorder()
 

@@ -4,7 +4,9 @@
 //  1. OIDC: Full OpenID Connect flow with an external identity provider
 //  2. Dev mode: Simple session-based auth for local development
 //
-// When OIDC_ISSUER is not configured, the server runs in dev mode.
+// Dev mode accepts any credentials, so it is only enabled when
+// AUTH_DEV_MODE=true is set explicitly. Without it (and until the OIDC flow
+// is implemented) the login endpoint answers 501.
 package auth
 
 import (
@@ -17,7 +19,36 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
 )
+
+// Roles, from most to least privileged. Owner, admin and editor may modify
+// SGSI records; auditor and viewer have read-only access.
+const (
+	RoleOwner   = "owner"
+	RoleAdmin   = "admin"
+	RoleEditor  = "editor"
+	RoleAuditor = "auditor"
+	RoleViewer  = "viewer"
+)
+
+// ValidRole reports whether role is a known role.
+func ValidRole(role string) bool {
+	switch role {
+	case RoleOwner, RoleAdmin, RoleEditor, RoleAuditor, RoleViewer:
+		return true
+	}
+	return false
+}
+
+// CanWrite reports whether the user may create, change or delete records.
+func (u *User) CanWrite() bool {
+	return u != nil && (u.Role == RoleOwner || u.Role == RoleAdmin || u.Role == RoleEditor)
+}
+
+// sessionCookie is the name of the HttpOnly cookie carrying the session token.
+const sessionCookie = "sgsi_session"
 
 // contextKey is an unexported type for context keys.
 type contextKey string
@@ -30,7 +61,7 @@ type User struct {
 	Email    string `json:"email"`
 	Name     string `json:"name"`
 	TenantID string `json:"tenant_id"`
-	Role     string `json:"role"` // "admin", "auditor", "viewer"
+	Role     string `json:"role"` // see the Role* constants
 }
 
 // FromContext extracts the authenticated user from the context.
@@ -93,6 +124,13 @@ func (s *SessionStore) Create(user *User) (string, error) {
 	}
 
 	s.mu.Lock()
+	// Drop expired sessions so abandoned logins do not accumulate.
+	now := time.Now()
+	for t, old := range s.sessions {
+		if now.After(old.ExpiresAt) {
+			delete(s.sessions, t)
+		}
+	}
 	s.sessions[token] = session
 	s.mu.Unlock()
 
@@ -130,6 +168,22 @@ func (s *SessionStore) Delete(token string) {
 type Handler struct {
 	sessions *SessionStore
 	devMode  bool
+
+	// secureCookies marks the session cookie Secure (HTTPS only).
+	secureCookies bool
+	// provisionTenant, if set, is called on dev login so the tenant exists
+	// in the database before the session is used.
+	provisionTenant func(ctx context.Context, tenantID string) error
+}
+
+// SetSecureCookies controls the Secure attribute of the session cookie.
+// Enable it whenever the platform is served over HTTPS.
+func (h *Handler) SetSecureCookies(secure bool) { h.secureCookies = secure }
+
+// SetTenantProvisioner registers a hook that makes sure the tenant exists
+// when a development session is created.
+func (h *Handler) SetTenantProvisioner(fn func(ctx context.Context, tenantID string) error) {
+	h.provisionTenant = fn
 }
 
 // NewHandler creates an auth handler.
@@ -151,7 +205,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 // Middleware validates the session token and injects the user into context.
-// It also sets the X-Tenant-ID header for downstream tenant middleware.
+// It also overwrites the X-Tenant-ID header with the session's tenant, so a
+// client can never choose which organization's data it reaches.
 func (h *Handler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := extractToken(r)
@@ -189,6 +244,7 @@ type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	TenantID string `json:"tenant_id"`
+	Role     string `json:"role"` // dev mode only; defaults to admin
 }
 
 type loginResponse struct {
@@ -203,6 +259,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req loginRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeAuthError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -217,13 +274,33 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !tenant.IsValidUUID(req.TenantID) {
+		writeAuthError(w, http.StatusBadRequest, "tenant_id must be a UUID")
+		return
+	}
+	if req.Role == "" {
+		req.Role = RoleAdmin
+	}
+	if !ValidRole(req.Role) {
+		writeAuthError(w, http.StatusBadRequest, "unknown role")
+		return
+	}
+	tenantID := strings.ToLower(req.TenantID)
+
+	if h.provisionTenant != nil {
+		if err := h.provisionTenant(r.Context(), tenantID); err != nil {
+			writeAuthError(w, http.StatusInternalServerError, "failed to prepare organization")
+			return
+		}
+	}
+
 	// In dev mode, accept any email/password combination
 	user := &User{
 		ID:       "dev-" + req.Email,
 		Email:    req.Email,
 		Name:     nameFromEmail(req.Email),
-		TenantID: req.TenantID,
-		Role:     "admin",
+		TenantID: tenantID,
+		Role:     req.Role,
 	}
 
 	token, err := h.sessions.Create(user)
@@ -231,6 +308,18 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
+
+	// Browsers authenticate with this cookie: HttpOnly keeps the token away
+	// from scripts and SameSite=Lax keeps it off cross-site POST/PUT/DELETE.
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(h.sessions.ttl),
+		HttpOnly: true,
+		Secure:   h.secureCookies,
+		SameSite: http.SameSiteLaxMode,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -245,6 +334,15 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if token != "" {
 		h.sessions.Delete(token)
 	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   h.secureCookies,
+		SameSite: http.SameSiteLaxMode,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -284,7 +382,7 @@ func extractToken(r *http.Request) string {
 	}
 
 	// Check cookie
-	cookie, err := r.Cookie("sgsi_session")
+	cookie, err := r.Cookie(sessionCookie)
 	if err == nil {
 		return cookie.Value
 	}

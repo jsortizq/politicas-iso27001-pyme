@@ -127,7 +127,7 @@ func TestHandler_NonDevLogin(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 
-	body := `{"email":"admin@test.com","tenant_id":"t1"}`
+	body := `{"email":"admin@test.com","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 
@@ -146,7 +146,7 @@ func TestHandler_SessionEndpoint(t *testing.T) {
 	h.Register(mux)
 
 	// Login first
-	body := `{"email":"admin@test.com","password":"x","tenant_id":"t1"}`
+	body := `{"email":"admin@test.com","password":"x","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -173,7 +173,7 @@ func TestHandler_Logout(t *testing.T) {
 	h.Register(mux)
 
 	// Login
-	body := `{"email":"admin@test.com","password":"x","tenant_id":"t1"}`
+	body := `{"email":"admin@test.com","password":"x","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`
 	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
@@ -264,5 +264,106 @@ func TestNameFromEmail(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("nameFromEmail(%q) = %q, want %q", tt.email, got, tt.expected)
 		}
+	}
+}
+
+func devLogin(t *testing.T, mux http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestHandler_DevLogin_RejectsBadTenantAndRole(t *testing.T) {
+	h := NewHandler(NewSessionStore(time.Hour), true)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	if rr := devLogin(t, mux, `{"email":"a@b.com","tenant_id":"t1"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("non-UUID tenant: expected 400, got %d", rr.Code)
+	}
+	if rr := devLogin(t, mux, `{"email":"a@b.com","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","role":"root"}`); rr.Code != http.StatusBadRequest {
+		t.Errorf("unknown role: expected 400, got %d", rr.Code)
+	}
+}
+
+func TestHandler_DevLogin_SetsHttpOnlyCookieAndCookieAuthWorks(t *testing.T) {
+	h := NewHandler(NewSessionStore(time.Hour), true)
+	h.SetSecureCookies(true)
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	rr := devLogin(t, mux, `{"email":"a@b.com","tenant_id":"AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE","role":"viewer"}`)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", rr.Code, rr.Body.String())
+	}
+	var resp loginResponse
+	json.NewDecoder(rr.Body).Decode(&resp)
+	if resp.User.TenantID != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" || resp.User.Role != "viewer" {
+		t.Errorf("unexpected user: %+v", resp.User)
+	}
+
+	cookies := rr.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != "sgsi_session" || !cookies[0].HttpOnly || !cookies[0].Secure ||
+		cookies[0].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("unexpected cookies: %+v", cookies)
+	}
+
+	// The cookie alone authenticates and pins the tenant, whatever the client sends.
+	var gotTenant string
+	protected := h.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotTenant = r.Header.Get("X-Tenant-ID")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/soa", nil)
+	req.AddCookie(cookies[0])
+	req.Header.Set("X-Tenant-ID", "ffffffff-ffff-ffff-ffff-ffffffffffff")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || gotTenant != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("cookie auth: code=%d tenant=%q", rec.Code, gotTenant)
+	}
+}
+
+func TestHandler_DevLogin_ProvisionsTenant(t *testing.T) {
+	h := NewHandler(NewSessionStore(time.Hour), true)
+	var provisioned string
+	h.SetTenantProvisioner(func(_ context.Context, id string) error {
+		provisioned = id
+		return nil
+	})
+	mux := http.NewServeMux()
+	h.Register(mux)
+
+	devLogin(t, mux, `{"email":"a@b.com","tenant_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}`)
+	if provisioned != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+		t.Errorf("provisioner not called, got %q", provisioned)
+	}
+}
+
+func TestUser_CanWrite(t *testing.T) {
+	for role, want := range map[string]bool{"owner": true, "admin": true, "editor": true, "auditor": false, "viewer": false, "": false} {
+		if got := (&User{Role: role}).CanWrite(); got != want {
+			t.Errorf("CanWrite(%q) = %v, want %v", role, got, want)
+		}
+	}
+	var nobody *User
+	if nobody.CanWrite() {
+		t.Error("nil user must not write")
+	}
+}
+
+func TestSessionStore_PurgesExpiredOnCreate(t *testing.T) {
+	store := NewSessionStore(time.Millisecond)
+	store.Create(&User{ID: "1"})
+	store.Create(&User{ID: "2"})
+	time.Sleep(5 * time.Millisecond)
+	store.Create(&User{ID: "3"})
+
+	store.mu.RLock()
+	n := len(store.sessions)
+	store.mu.RUnlock()
+	if n != 1 {
+		t.Errorf("expected only the fresh session to remain, got %d", n)
 	}
 }

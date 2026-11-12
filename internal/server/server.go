@@ -6,6 +6,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/api"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/auth"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/database"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/health"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
 )
@@ -25,14 +27,18 @@ import (
 type Server struct {
 	cfg    *config.Config
 	logger *slog.Logger
+	db     *sql.DB // nil: in-memory stores (development without a database)
 	http   *http.Server
 }
 
 // New creates a Server with the given configuration and logger.
-func New(cfg *config.Config, logger *slog.Logger) *Server {
+// With a nil db the server keeps data in memory, which is lost on restart;
+// with a db every tenant-scoped query goes through Row-Level Security.
+func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
 	s := &Server{
 		cfg:    cfg,
 		logger: logger,
+		db:     db,
 	}
 
 	mux := s.routes()
@@ -56,29 +62,50 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", healthHandler.Liveness)
 	mux.HandleFunc("GET /readyz", healthHandler.Readiness)
 
+	if s.db != nil {
+		healthHandler.Register("database", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			return s.db.PingContext(ctx)
+		})
+	}
+
 	// ── Auth routes (no tenant context) ──
-	devMode := s.cfg.Auth.Issuer == "" // dev mode when no OIDC issuer
 	sessions := auth.NewSessionStore(8 * time.Hour)
-	authHandler := auth.NewHandler(sessions, devMode)
+	authHandler := auth.NewHandler(sessions, s.cfg.Auth.DevMode)
+	authHandler.SetSecureCookies(!s.cfg.Auth.DevMode)
+	if s.db != nil {
+		authHandler.SetTenantProvisioner(func(ctx context.Context, tenantID string) error {
+			return database.EnsureTenant(ctx, s.db, tenantID, "Organización de desarrollo")
+		})
+	}
 	authHandler.Register(mux)
 
-	// ── API v1 routes (tenant-scoped) ──
+	// ── API v1 routes (authenticated, tenant-scoped) ──
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /v1/info", s.handleInfo)
 
-	// SoA CRUD endpoints
-	soaStore := api.NewMemorySoAStore()
-	soaHandler := api.NewSoAHandler(soaStore, s.logger)
-	soaHandler.Register(apiMux)
+	var (
+		soaStore   api.SoAStore   = api.NewMemorySoAStore()
+		assetStore api.AssetStore = api.NewMemoryAssetStore()
+		riskStore  api.RiskStore  = api.NewMemoryRiskStore()
+	)
+	if s.db != nil {
+		soaStore = api.NewPgSoAStore(s.db)
+		assetStore = api.NewPgAssetStore(s.db)
+		riskStore = api.NewPgRiskStore(s.db)
+	}
+	api.NewSoAHandler(soaStore, s.logger).Register(apiMux)
+	api.NewAssetHandler(assetStore, s.logger).Register(apiMux)
+	api.NewRiskHandler(riskStore, s.logger).Register(apiMux)
 
-	// Wrap API routes with tenant middleware
-	tenantAPI := tenant.Middleware(apiMux)
-	mux.Handle("GET /api/", http.StripPrefix("/api", tenantAPI))
-	mux.Handle("POST /api/", http.StripPrefix("/api", tenantAPI))
-	mux.Handle("PUT /api/", http.StripPrefix("/api", tenantAPI))
-	mux.Handle("PATCH /api/", http.StripPrefix("/api", tenantAPI))
-	mux.Handle("DELETE /api/", http.StripPrefix("/api", tenantAPI))
-	mux.Handle("OPTIONS /api/", http.StripPrefix("/api", tenantAPI))
+	// Order matters: the session decides the tenant (auth overwrites the
+	// X-Tenant-ID header), then the role decides whether writes are allowed.
+	protected := authHandler.Middleware(tenant.Middleware(requireWriteRole(apiMux)))
+	apiHandler := http.StripPrefix("/api", protected)
+	for _, method := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+		mux.Handle(method+" /api/", apiHandler)
+	}
 
 	// ── Root handler ──
 	mux.HandleFunc("GET /", s.handleRoot)
@@ -146,6 +173,22 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 
 // ── Middleware ──
 
+// requireWriteRole rejects state-changing requests from read-only roles
+// (auditor, viewer). It must run after auth.Middleware.
+func requireWriteRole(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if !auth.FromContext(r.Context()).CanWrite() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprint(w, `{"error":"your role does not allow changes"}`)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) requestLogMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -167,6 +210,8 @@ func (s *Server) requestLogMiddleware(next http.Handler) http.Handler {
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", s.cfg.Server.CORSOrigins)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID")
 		w.Header().Set("Access-Control-Max-Age", "86400")
