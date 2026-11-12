@@ -57,6 +57,7 @@ services:
       DATABASE_URL: postgres://sgsi_app:sgsi_app_dev@postgres:5432/sgsi?sslmode=disable
       DATABASE_MIGRATE_URL: postgres://sgsi:sgsi_dev@postgres:5432/sgsi?sslmode=disable
       AUTH_DEV_MODE: "true"
+      APP_URL: http://localhost:3000
       CORS_ORIGINS: http://localhost:3000
       LOG_FORMAT: text
     ports:

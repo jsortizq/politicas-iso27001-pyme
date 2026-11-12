@@ -80,9 +80,11 @@ politicas-iso27001-pyme/
 ### Plataforma web (en desarrollo)
 
 Además del CLI, el repositorio contiene la plataforma SaaS multiempresa: API en Go,
-PostgreSQL con Row-Level Security y frontend en Next.js. Estado actual: Declaración de
-Aplicabilidad (93 controles), inventario de activos y registro de riesgos. Documentos,
-evidencias, auditorías, SSO (OIDC) y el copiloto de IA aún no están implementados.
+PostgreSQL con Row-Level Security y frontend en Next.js. Estado actual: inicio de sesión
+con SSO (OpenID Connect), organizaciones con miembros y roles, Declaración de
+Aplicabilidad (93 controles), inventario de activos, registro de riesgos y registro de
+actividad. Documentos, evidencias, auditorías internas y el copiloto de IA aún no están
+implementados.
 Arquitectura: [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
 
 ```bash
@@ -96,6 +98,23 @@ make web                 # frontend en http://localhost:3000 (otra terminal)
 Entra en http://localhost:3000/login con cualquier correo y contraseña: el login de
 desarrollo (`AUTH_DEV_MODE=true`) no valida credenciales, así que **no lo actives en
 un servidor accesible desde internet**.
+
+Para usar SSO en lugar del login de desarrollo, registra la aplicación en tu proveedor
+OpenID Connect (Keycloak, Google, Microsoft Entra ID…) con la URI de redirección
+`http://localhost:3000/auth/callback` y define en `.env`:
+
+```bash
+OIDC_ISSUER=https://idp.ejemplo.com/realms/sgsi
+OIDC_CLIENT_ID=sgsi-web
+OIDC_CLIENT_SECRET=...
+AUTH_DEV_MODE=false
+```
+
+La primera persona que entra crea su organización y queda como propietaria; el resto
+entra por invitación desde **Miembros** (la plataforma no envía correos: avisa tú a la
+persona invitada). Con `AUTH_ALLOW_SIGNUP=false` nadie puede crear organizaciones nuevas.
+El proveedor debe firmar con RS256 y enviar `email_verified` para que las invitaciones
+se acepten. Detalles en [ADR-005](docs/architecture/decisions/ADR-005-identidad-oidc-y-membresias.md).
 
 - `make test` ejecuta las pruebas unitarias; `make test-db` añade las de integración
   contra PostgreSQL (aislamiento entre empresas, RLS, registro de auditoría).
