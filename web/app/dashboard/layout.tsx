@@ -3,28 +3,30 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { roleLabels } from '@/lib/api';
 import { SessionProvider, useSession } from '@/lib/session';
-
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard' },
-  { name: 'Controles SoA', href: '/dashboard/soa' },
-  { name: 'Activos', href: '/dashboard/assets' },
-  { name: 'Riesgos', href: '/dashboard/risks' },
-];
 
 // Planned modules, shown so the roadmap is visible but not clickable.
 const upcoming = ['Documentos', 'Auditorías'];
 
-const roleLabels: Record<string, string> = {
-  owner: 'Propietario',
-  admin: 'Administrador',
-  editor: 'Editor',
-  auditor: 'Auditor (solo lectura)',
-  viewer: 'Lector (solo lectura)',
-};
-
 function Nav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { canViewAudit } = useSession();
+
+  const navigation = [
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Controles SoA', href: '/dashboard/soa' },
+    { name: 'Activos', href: '/dashboard/assets' },
+    { name: 'Riesgos', href: '/dashboard/risks' },
+    // Members and the activity log are for owners, administrators and auditors.
+    ...(canViewAudit
+      ? [
+          { name: 'Miembros', href: '/dashboard/members' },
+          { name: 'Actividad', href: '/dashboard/activity' },
+        ]
+      : []),
+  ];
+
   return (
     <nav className="flex-1 space-y-1 px-2 py-4" aria-label="Principal">
       {navigation.map((item) => {
@@ -53,6 +55,42 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
         </span>
       ))}
     </nav>
+  );
+}
+
+function OrganizationBox() {
+  const { user, organizations, organizationName, switchOrganization } = useSession();
+  const [switching, setSwitching] = useState(false);
+
+  return (
+    <div className="space-y-1 border-b px-4 py-3">
+      <p className="text-xs text-muted-foreground">Organización</p>
+      {organizations.length > 1 ? (
+        <select
+          className="input h-9"
+          aria-label="Cambiar de organización"
+          value={user.tenant_id}
+          disabled={switching}
+          onChange={(e) => {
+            setSwitching(true);
+            switchOrganization(e.target.value).catch(() => setSwitching(false));
+          }}
+        >
+          {organizations.map((org) => (
+            <option key={org.tenant_id} value={org.tenant_id}>
+              {org.tenant_name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="truncate text-sm font-medium" title={organizationName}>
+          {organizationName}
+        </p>
+      )}
+      <Link href="/onboarding" className="block text-xs text-muted-foreground underline underline-offset-4">
+        Otras organizaciones
+      </Link>
+    </div>
   );
 }
 
@@ -85,6 +123,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         <Link href="/dashboard" className="border-b px-4 py-5 text-lg font-bold">
           SGSI Platform
         </Link>
+        <OrganizationBox />
         <Nav />
         <UserBox />
       </aside>
@@ -105,6 +144,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </header>
         {menuOpen && (
           <div id="mobile-menu" className="border-b md:hidden">
+            <OrganizationBox />
             <Nav onNavigate={() => setMenuOpen(false)} />
             <UserBox />
           </div>

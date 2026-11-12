@@ -2,17 +2,27 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ApiError, authApi, canWrite, type User } from './api';
+import { ApiError, authApi, type Organization, type User } from './api';
 
 interface SessionValue {
   user: User;
+  /** Organizations this person belongs to, including the active one. */
+  organizations: Organization[];
+  organizationName: string;
+  canCreateOrganization: boolean;
+  /** owner, admin, editor: may change SGSI records. */
   canWrite: boolean;
+  /** owner, admin: may invite, change and remove members. */
+  canManageMembers: boolean;
+  /** owner, admin, auditor: may see members and the activity log. */
+  canViewAudit: boolean;
   logout: () => Promise<void>;
+  switchOrganization: (tenantId: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionValue | null>(null);
 
-/** Session of the signed-in user. Only usable below <SessionProvider>. */
+/** Session of the signed-in member. Only usable below <SessionProvider>. */
 export function useSession(): SessionValue {
   const value = useContext(SessionContext);
   if (!value) throw new Error('useSession must be used inside SessionProvider');
@@ -21,18 +31,49 @@ export function useSession(): SessionValue {
 
 /**
  * Loads the session before rendering its children. Visitors without a
- * valid session are sent to /login; nothing below renders for them.
+ * session go to /login; people who have not joined or created an
+ * organization go to /onboarding. Nothing below renders for either.
  */
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
+  const [value, setValue] = useState<SessionValue | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+
+  const logout = useCallback(async () => {
+    await authApi.logout().catch(() => undefined);
+    router.replace('/login');
+  }, [router]);
+
+  const switchOrganization = useCallback(async (tenantId: string) => {
+    await authApi.switchOrganization(tenantId);
+    // Full reload: every page must refetch its data for the new organization.
+    window.location.assign('/dashboard');
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     authApi
       .session()
-      .then((s) => !cancelled && setUser(s.user))
+      .then((s) => {
+        if (cancelled) return;
+        if (!s.user) {
+          router.replace('/onboarding');
+          return;
+        }
+        const role = s.user.role;
+        setValue({
+          user: s.user,
+          organizations: s.organizations,
+          organizationName:
+            s.organizations.find((o) => o.tenant_id === s.user!.tenant_id)?.tenant_name ?? '',
+          canCreateOrganization: s.can_create_organization,
+          canWrite: ['owner', 'admin', 'editor'].includes(role),
+          canManageMembers: ['owner', 'admin'].includes(role),
+          canViewAudit: ['owner', 'admin', 'auditor'].includes(role),
+          logout,
+          switchOrganization,
+        });
+      })
       .catch((err) => {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 401) router.replace('/login');
@@ -41,12 +82,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [router]);
-
-  const logout = useCallback(async () => {
-    await authApi.logout().catch(() => undefined);
-    router.replace('/login');
-  }, [router]);
+  }, [router, logout, switchOrganization]);
 
   if (problem) {
     return (
@@ -61,7 +97,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!user) {
+  if (!value) {
     return (
       <div className="flex min-h-screen items-center justify-center" role="status" aria-label="Cargando">
         <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -69,9 +105,5 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return (
-    <SessionContext.Provider value={{ user, canWrite: canWrite(user), logout }}>
-      {children}
-    </SessionContext.Provider>
-  );
+  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

@@ -11,6 +11,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Machine-readable reason sent by the API, e.g. "no_organization". */
+    public code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -32,7 +34,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 
   if (!res.ok) {
     const payload = await res.json().catch(() => null);
-    throw new ApiError(res.status, payload?.error || `Error HTTP ${res.status}`);
+    throw new ApiError(res.status, payload?.error || `Error HTTP ${res.status}`, payload?.code);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -56,22 +58,104 @@ export interface ListResponse<T> {
 
 // ── Auth ──
 
+export type Role = 'owner' | 'admin' | 'editor' | 'auditor' | 'viewer';
+
+export const roleLabels: Record<Role, string> = {
+  owner: 'Propietario',
+  admin: 'Administrador',
+  editor: 'Editor',
+  auditor: 'Auditor',
+  viewer: 'Lector',
+};
+
 export interface User {
   id: string;
   email: string;
   name: string;
   tenant_id: string;
-  role: 'owner' | 'admin' | 'editor' | 'auditor' | 'viewer';
+  role: Role;
 }
 
-export const canWrite = (user: User | null) =>
-  !!user && ['owner', 'admin', 'editor'].includes(user.role);
+export interface Organization {
+  user_id: string;
+  tenant_id: string;
+  tenant_name: string;
+  role: Role;
+}
+
+export interface SessionInfo {
+  identity: { email: string; name: string };
+  /** Member of the active organization; null until one is selected. */
+  user: User | null;
+  organizations: Organization[];
+  needs_organization: boolean;
+  can_create_organization: boolean;
+}
+
+export interface AuthConfig {
+  dev_login: boolean;
+  sso: boolean;
+  signup: boolean;
+}
 
 export const authApi = {
-  login: (email: string, password: string, tenantId: string) =>
-    request<{ user: User }>('/auth/login', 'POST', { email, password, tenant_id: tenantId }),
+  config: () => request<AuthConfig>('/auth/config'),
+  devLogin: (email: string, password: string, tenantId: string) =>
+    request<SessionInfo>('/auth/login', 'POST', { email, password, tenant_id: tenantId }),
   logout: () => request<void>('/auth/logout', 'POST'),
-  session: () => request<{ user: User; expires_at: string }>('/auth/session'),
+  session: () => request<SessionInfo>('/auth/session'),
+  createOrganization: (name: string) =>
+    request<SessionInfo>('/auth/organizations', 'POST', { name }),
+  switchOrganization: (tenantId: string) =>
+    request<SessionInfo>('/auth/switch', 'POST', { tenant_id: tenantId }),
+};
+
+/** Browser navigation target that starts single sign-on. */
+export const SSO_LOGIN_URL = '/auth/oidc/login';
+
+// ── Members ──
+
+export interface Member {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  status: 'invited' | 'active';
+  last_login?: string;
+  created_at: string;
+}
+
+export const membersApi = {
+  list: () => request<ListResponse<Member>>('/api/v1/users'),
+  invite: (email: string, name: string, role: Role) =>
+    request<Member>('/api/v1/users', 'POST', { email, name, role }),
+  setRole: (id: string, role: Role) => request<Member>(`/api/v1/users/${id}`, 'PUT', { role }),
+  remove: (id: string) => request<void>(`/api/v1/users/${id}`, 'DELETE'),
+};
+
+// ── Audit trail ──
+
+export interface AuditEvent {
+  id: number;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  actor: string;
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AuditPage {
+  data: AuditEvent[];
+  /** Pass as `before` to load older events; absent on the last page. */
+  next_before?: number;
+  /** False when the server runs without a database and records nothing. */
+  recorded: boolean;
+}
+
+export const auditApi = {
+  list: (before?: number) =>
+    request<AuditPage>(`/api/v1/audit-log?limit=50${before ? `&before=${before}` : ''}`),
 };
 
 // ── SoA ──

@@ -5,7 +5,8 @@ import { ApiError, errorMessage } from './api';
 
 /**
  * Loads data with loading and error state, and exposes reload().
- * A 401 means the session ended, so the user is sent back to /login.
+ * A 401 means the session ended, so the user is sent back to /login; losing
+ * the organization (removed by an administrator) leads to /onboarding.
  */
 export function useResource<T>(load: () => Promise<T>) {
   const [data, setData] = useState<T | null>(null);
@@ -19,6 +20,11 @@ export function useResource<T>(load: () => Promise<T>) {
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         window.location.assign('/login');
+        return;
+      }
+      // Removed from the organization while the page was open.
+      if (err instanceof ApiError && err.code === 'no_organization') {
+        window.location.assign('/onboarding');
         return;
       }
       setError(errorMessage(err));
