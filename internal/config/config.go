@@ -43,6 +43,9 @@ type DatabaseConfig struct {
 	SSLMode  string
 	MaxConns int
 	URL      string // full DSN override
+
+	// MigrateURL is the administrator DSN used only by cmd/migrate.
+	MigrateURL string
 }
 
 // RedisConfig holds Redis connection settings.
@@ -66,6 +69,11 @@ type AuthConfig struct {
 	ClientSecret string
 	RedirectURL  string
 	SessionKey   string
+
+	// DevMode enables the development login, which accepts any credentials.
+	// It must be requested explicitly (AUTH_DEV_MODE=true) and is never
+	// inferred from missing OIDC settings.
+	DevMode bool
 }
 
 // AIConfig holds AI gateway settings.
@@ -102,6 +110,8 @@ func Load() *Config {
 			SSLMode:  env("DB_SSLMODE", "disable"),
 			MaxConns: envInt("DB_MAX_CONNS", 20),
 			URL:      env("DATABASE_URL", ""),
+
+			MigrateURL: env("DATABASE_MIGRATE_URL", ""),
 		},
 		Redis: RedisConfig{
 			URL: env("REDIS_URL", "redis://localhost:6379/0"),
@@ -119,6 +129,7 @@ func Load() *Config {
 			ClientSecret: env("OIDC_CLIENT_SECRET", ""),
 			RedirectURL:  env("OIDC_REDIRECT_URL", "http://localhost:8080/auth/callback"),
 			SessionKey:   env("SESSION_KEY", "dev-session-key-change-in-production"),
+			DevMode:      envBool("AUTH_DEV_MODE", false),
 		},
 		AI: AIConfig{
 			Provider: env("AI_PROVIDER", "anthropic"),
@@ -163,6 +174,15 @@ func envInt(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func envBool(key string, fallback bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

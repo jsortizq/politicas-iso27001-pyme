@@ -50,6 +50,10 @@ func WithTenantID(ctx context.Context, id string) context.Context {
 //  2. The JWT claims (when OIDC is configured)
 //
 // If no valid tenant ID is found, it returns 403 Forbidden.
+//
+// SECURITY: this middleware trusts the X-Tenant-ID header. It must only run
+// behind auth.Middleware, which overwrites that header with the tenant of
+// the authenticated session. Never expose it directly to clients.
 func Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tenantStr := r.Header.Get("X-Tenant-ID")
@@ -84,7 +88,7 @@ func SetOnConnection(ctx context.Context, conn *sql.Conn) error {
 	}
 
 	_, err := conn.ExecContext(ctx,
-		fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+		`SELECT set_config('app.tenant_id', $1, true)`, tenantID)
 	return err
 }
 
@@ -98,7 +102,7 @@ func SetOnTx(ctx context.Context, tx *sql.Tx) error {
 	}
 
 	_, err := tx.ExecContext(ctx,
-		fmt.Sprintf("SET LOCAL app.tenant_id = '%s'", tenantID))
+		`SELECT set_config('app.tenant_id', $1, true)`, tenantID)
 	return err
 }
 

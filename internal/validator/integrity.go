@@ -10,19 +10,19 @@ import (
 
 // IntegrityFinding represents a missing or broken reference.
 type IntegrityFinding struct {
-	Control    string `json:"control"`
-	Field      string `json:"field"`
-	Path       string `json:"path"`
-	Problem    string `json:"problem"`
+	Control string `json:"control"`
+	Field   string `json:"field"`
+	Path    string `json:"path"`
+	Problem string `json:"problem"`
 }
 
 // SOAControl is the minimal control structure needed for integrity checks.
 type SOAControl struct {
-	ID               string  `json:"id"`
-	PolicyFileES     *string `json:"policy_file_es"`
-	PolicyFileEN     *string `json:"policy_file_en"`
-	ImplementationStatus string `json:"implementation_status"`
-	ValidationMethod string  `json:"validation_method"`
+	ID                   string  `json:"id"`
+	PolicyFileES         *string `json:"policy_file_es"`
+	PolicyFileEN         *string `json:"policy_file_en"`
+	ImplementationStatus string  `json:"implementation_status"`
+	ValidationMethod     string  `json:"validation_method"`
 }
 
 // CheckFileReferences verifies that all policy files referenced in controls

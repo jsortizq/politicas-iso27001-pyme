@@ -16,10 +16,10 @@ type Matrix struct {
 
 // Metadata contains document identification fields.
 type Metadata struct {
-	Standard    string `json:"standard"`
-	Document    string `json:"document"`
-	Version     string `json:"version"`
-	LastUpdated string `json:"last_updated"`
+	Standard     string `json:"standard"`
+	Document     string `json:"document"`
+	Version      string `json:"version"`
+	LastUpdated  string `json:"last_updated"`
 	Organization string `json:"organization,omitempty"`
 	PreparedBy   string `json:"prepared_by,omitempty"`
 	ApprovedBy   string `json:"approved_by,omitempty"`

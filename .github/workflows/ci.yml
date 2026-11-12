@@ -24,11 +24,44 @@ jobs:
       - name: Run tests
         run: go test -race -v ./...
 
-      - name: Build CLI
-        run: go build -v -o iso-cli ./cmd/iso-cli/
+      - name: Build binaries
+        run: |
+          go build -v -o iso-cli ./cmd/iso-cli/
+          go build -v -o /tmp/api ./cmd/api/
+          go build -v -o /tmp/migrate ./cmd/migrate/
 
       - name: Run CLI version check
         run: ./iso-cli version
+
+  integration:
+    name: PostgreSQL integration & tenant isolation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sgsi
+          POSTGRES_PASSWORD: sgsi_ci
+          POSTGRES_DB: sgsi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sgsi -d sgsi"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run integration tests (migrations, RLS, stores, audit trail)
+        env:
+          TEST_DATABASE_URL: postgres://sgsi:sgsi_ci@localhost:5432/sgsi?sslmode=disable
+        run: go test -race -count=1 -v ./internal/database/... ./internal/api/...
 
   validate-docs:
     name: Validate documentation

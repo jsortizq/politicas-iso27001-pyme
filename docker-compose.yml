@@ -1,0 +1,70 @@
+# Entorno de desarrollo local — NO usar estas credenciales en producción.
+#
+#   make up        # levanta PostgreSQL, Redis y MinIO
+#   make migrate   # aplica migraciones y carga el catálogo de controles
+#   make dev       # arranca la API contra la base de datos
+#
+# La API se conecta con el rol sgsi_app (sin privilegios de superusuario) para
+# que las políticas RLS se apliquen. El rol sgsi solo se usa para migraciones.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: sgsi
+      POSTGRES_PASSWORD: sgsi_dev
+      POSTGRES_DB: sgsi
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sgsi -d sgsi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: sgsi_minio
+      MINIO_ROOT_PASSWORD: sgsi_minio_dev
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - miniodata:/data
+
+  # Perfil opcional: `docker compose --profile app up --build`
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgres://sgsi_app:sgsi_app_dev@postgres:5432/sgsi?sslmode=disable
+      DATABASE_MIGRATE_URL: postgres://sgsi:sgsi_dev@postgres:5432/sgsi?sslmode=disable
+      AUTH_DEV_MODE: "true"
+      CORS_ORIGINS: http://localhost:3000
+      LOG_FORMAT: text
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  miniodata:

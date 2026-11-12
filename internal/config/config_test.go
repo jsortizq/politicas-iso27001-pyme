@@ -98,3 +98,25 @@ func TestEnvInt_InvalidFallback(t *testing.T) {
 		t.Errorf("expected fallback 8080 for invalid int, got %d", cfg.Server.Port)
 	}
 }
+
+func TestLoad_AuthDevModeIsOptIn(t *testing.T) {
+	t.Setenv("AUTH_DEV_MODE", "")
+	if Load().Auth.DevMode {
+		t.Error("dev mode must be off by default")
+	}
+	t.Setenv("AUTH_DEV_MODE", "true")
+	if !Load().Auth.DevMode {
+		t.Error("AUTH_DEV_MODE=true should enable dev mode")
+	}
+	t.Setenv("AUTH_DEV_MODE", "banana")
+	if Load().Auth.DevMode {
+		t.Error("unparseable value must not enable dev mode")
+	}
+}
+
+func TestLoad_MigrateURL(t *testing.T) {
+	t.Setenv("DATABASE_MIGRATE_URL", "postgres://admin@db/sgsi")
+	if got := Load().Database.MigrateURL; got != "postgres://admin@db/sgsi" {
+		t.Errorf("MigrateURL = %q", got)
+	}
+}

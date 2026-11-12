@@ -12,7 +12,7 @@
 
 # Go
 vendor/
-go.sum
+.env
 
 # IDE
 .vscode/
