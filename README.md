@@ -82,9 +82,9 @@ politicas-iso27001-pyme/
 Además del CLI, el repositorio contiene la plataforma SaaS multiempresa: API en Go,
 PostgreSQL con Row-Level Security y frontend en Next.js. Estado actual: inicio de sesión
 con SSO (OpenID Connect), organizaciones con miembros y roles, Declaración de
-Aplicabilidad (93 controles), inventario de activos, registro de riesgos y registro de
-actividad. Documentos, evidencias, auditorías internas y el copiloto de IA aún no están
-implementados.
+Aplicabilidad (93 controles), inventario de activos, registro de riesgos, documentos con
+versiones y aprobación, evidencias con huella de integridad y registro de actividad.
+Auditorías internas, informes y el copiloto de IA aún no están implementados.
 Arquitectura: [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md).
 
 ```bash
@@ -115,6 +115,12 @@ entra por invitación desde **Miembros** (la plataforma no envía correos: avisa
 persona invitada). Con `AUTH_ALLOW_SIGNUP=false` nadie puede crear organizaciones nuevas.
 El proveedor debe firmar con RS256 y enviar `email_verified` para que las invitaciones
 se acepten. Detalles en [ADR-005](docs/architecture/decisions/ADR-005-identidad-oidc-y-membresias.md).
+
+Los documentos y evidencias se guardan en MinIO (S3) con la configuración de `.env.example`;
+sin `S3_ACCESS_KEY` se guardan en la carpeta `data/storage`. Los archivos subidos **no se
+analizan con antivirus** y se descargan siempre como adjunto, nunca se abren dentro de la
+aplicación. El límite por archivo es `MAX_UPLOAD_MB` (25 por defecto). Detalles en
+[ADR-006](docs/architecture/decisions/ADR-006-documentos-y-evidencias.md).
 
 - `make test` ejecuta las pruebas unitarias; `make test-db` añade las de integración
   contra PostgreSQL (aislamiento entre empresas, RLS, registro de auditoría).

@@ -58,10 +58,39 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Run integration tests (migrations, RLS, stores, audit trail)
+      # Service containers cannot pass a command, and MinIO needs "server /data".
+      - name: Start MinIO (S3-compatible storage)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=sgsi_ci -e MINIO_ROOT_PASSWORD=sgsi_ci_secret \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          docker logs minio
+          exit 1
+
+      - name: Run integration tests (migrations, RLS, stores, audit trail, S3 storage)
         env:
           TEST_DATABASE_URL: postgres://sgsi:sgsi_ci@localhost:5432/sgsi?sslmode=disable
-        run: go test -race -count=1 -v ./internal/database/... ./internal/api/...
+          TEST_S3_ENDPOINT: http://localhost:9000
+          TEST_S3_ACCESS_KEY: sgsi_ci
+          TEST_S3_SECRET_KEY: sgsi_ci_secret
+        run: go test -race -count=1 -v ./internal/database/... ./internal/directory/... ./internal/api/... ./internal/storage/...
+
+      # A skipped test here would mean the real services were not exercised.
+      - name: Fail if any integration test was skipped
+        env:
+          TEST_DATABASE_URL: postgres://sgsi:sgsi_ci@localhost:5432/sgsi?sslmode=disable
+          TEST_S3_ENDPOINT: http://localhost:9000
+          TEST_S3_ACCESS_KEY: sgsi_ci
+          TEST_S3_SECRET_KEY: sgsi_ci_secret
+        run: |
+          if go test -count=1 -v ./internal/database/... ./internal/directory/... ./internal/api/... ./internal/storage/... | grep -E '^\s*--- SKIP'; then
+            echo "integration tests were skipped"
+            exit 1
+          fi
 
   web:
     name: Frontend (lint, types, build)

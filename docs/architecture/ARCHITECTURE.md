@@ -357,7 +357,7 @@ Cada tarea se acepta cuando cumple:
 | Autenticación                          | SSO con OIDC (ADR-005) y login de desarrollo        |
 | Organizaciones, miembros y roles       | Hecho: alta, invitación, roles, cambio de empresa   |
 | Sesiones                               | En memoria; pendiente pasarlas a Redis              |
-| Documentos y evidencias (S3)           | Pendiente                                           |
+| Documentos y evidencias (S3)           | Hecho: versiones, aprobación, integridad (ADR-006)  |
 | Auditorías internas e informes         | Pendiente (tablas creadas, sin API)                 |
 | Workers (Redis) y copiloto IA          | Pendiente                                           |
 
@@ -369,4 +369,5 @@ Diferencias con la estructura objetivo de la sección 4: los paquetes viven en
 
 Las decisiones de arquitectura se documentan en archivos individuales
 en `docs/architecture/decisions/`. Véase [ADR-001](decisions/ADR-001-monolito-modular.md).
-La identidad y las membresías están en [ADR-005](decisions/ADR-005-identidad-oidc-y-membresias.md).
+La identidad y las membresías están en [ADR-005](decisions/ADR-005-identidad-oidc-y-membresias.md);
+los documentos y evidencias, en [ADR-006](decisions/ADR-006-documentos-y-evidencias.md).
