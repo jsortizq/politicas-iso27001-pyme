@@ -56,14 +56,16 @@ func newFileEnv(t *testing.T, dbs *dbtest.DBs) *fileEnv {
 	e := &fileEnv{t: t, mux: http.NewServeMux(), root: root, store: store, dbs: dbs, members: map[string]*auth.User{}}
 
 	var (
-		members directory.Store = directory.NewMemoryStore()
-		docs    DocumentStore   = NewMemoryDocumentStore()
-		evid    EvidenceStore   = NewMemoryEvidenceStore()
+		members directory.Store    = directory.NewMemoryStore()
+		docs    DocumentStore      = NewMemoryDocumentStore()
+		evid    EvidenceStore      = NewMemoryEvidenceStore()
+		audits  InternalAuditStore = NewMemoryInternalAuditStore()
 	)
 	if dbs != nil {
 		members = directory.NewPgStore(dbs.App)
 		docs = NewPgDocumentStore(dbs.App)
 		evid = NewPgEvidenceStore(dbs.App)
+		audits = NewPgInternalAuditStore(dbs.App)
 	}
 	// Real member records, so uploaded_by / reviewed_by reference users.
 	for _, m := range []struct{ key, tenant, role string }{
@@ -82,6 +84,7 @@ func newFileEnv(t *testing.T, dbs *dbtest.DBs) *fileEnv {
 	files := NewFiles(store, testMaxUpload, logger)
 	NewDocumentHandler(docs, files, logger).Register(e.mux)
 	NewEvidenceHandler(evid, files, logger).Register(e.mux)
+	NewInternalAuditHandler(audits, logger).Register(e.mux)
 	return e
 }
 

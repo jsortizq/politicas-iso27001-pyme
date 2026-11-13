@@ -78,13 +78,14 @@ func (s *Server) routes() http.Handler {
 
 	// ── Stores: PostgreSQL when configured, otherwise in memory ──
 	var (
-		members    directory.Store   = directory.NewMemoryStore()
-		soaStore   api.SoAStore      = api.NewMemorySoAStore()
-		assetStore api.AssetStore    = api.NewMemoryAssetStore()
-		riskStore  api.RiskStore     = api.NewMemoryRiskStore()
-		docStore   api.DocumentStore = api.NewMemoryDocumentStore()
-		evidStore  api.EvidenceStore = api.NewMemoryEvidenceStore()
-		auditStore api.AuditStore    // the audit trail is only recorded in PostgreSQL
+		members        directory.Store        = directory.NewMemoryStore()
+		soaStore       api.SoAStore           = api.NewMemorySoAStore()
+		assetStore     api.AssetStore         = api.NewMemoryAssetStore()
+		riskStore      api.RiskStore          = api.NewMemoryRiskStore()
+		docStore       api.DocumentStore      = api.NewMemoryDocumentStore()
+		evidStore      api.EvidenceStore      = api.NewMemoryEvidenceStore()
+		internalAudits api.InternalAuditStore = api.NewMemoryInternalAuditStore()
+		auditStore     api.AuditStore         // the audit trail is only recorded in PostgreSQL
 	)
 	if s.db != nil {
 		members = directory.NewPgStore(s.db)
@@ -93,6 +94,7 @@ func (s *Server) routes() http.Handler {
 		riskStore = api.NewPgRiskStore(s.db)
 		docStore = api.NewPgDocumentStore(s.db)
 		evidStore = api.NewPgEvidenceStore(s.db)
+		internalAudits = api.NewPgInternalAuditStore(s.db)
 		auditStore = api.NewPgAuditStore(s.db)
 	}
 
@@ -126,6 +128,7 @@ func (s *Server) routes() http.Handler {
 	uploads := api.NewFiles(s.files, int64(s.cfg.Storage.MaxUploadMB)<<20, s.logger)
 	api.NewDocumentHandler(docStore, uploads, s.logger).Register(apiMux)
 	api.NewEvidenceHandler(evidStore, uploads, s.logger).Register(apiMux)
+	api.NewInternalAuditHandler(internalAudits, s.logger).Register(apiMux)
 	directory.NewHandler(members, s.logger).Register(apiMux)
 
 	// Order matters: the session decides the tenant (auth overwrites the
