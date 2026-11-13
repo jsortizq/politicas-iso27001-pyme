@@ -21,6 +21,7 @@ import (
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/directory"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/health"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/storage"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/tenant"
 )
 
@@ -29,17 +30,21 @@ type Server struct {
 	cfg    *config.Config
 	logger *slog.Logger
 	db     *sql.DB // nil: in-memory stores (development without a database)
+	files  storage.Store
 	http   *http.Server
 }
 
 // New creates a Server with the given configuration and logger.
 // With a nil db the server keeps data in memory, which is lost on restart;
 // with a db every tenant-scoped query goes through Row-Level Security.
-func New(cfg *config.Config, logger *slog.Logger, db *sql.DB) *Server {
+//
+// files is where uploaded documents and evidence are kept.
+func New(cfg *config.Config, logger *slog.Logger, db *sql.DB, files storage.Store) *Server {
 	s := &Server{
 		cfg:    cfg,
 		logger: logger,
 		db:     db,
+		files:  files,
 	}
 
 	mux := s.routes()
@@ -73,17 +78,21 @@ func (s *Server) routes() http.Handler {
 
 	// ── Stores: PostgreSQL when configured, otherwise in memory ──
 	var (
-		members    directory.Store = directory.NewMemoryStore()
-		soaStore   api.SoAStore    = api.NewMemorySoAStore()
-		assetStore api.AssetStore  = api.NewMemoryAssetStore()
-		riskStore  api.RiskStore   = api.NewMemoryRiskStore()
-		auditStore api.AuditStore  // the audit trail is only recorded in PostgreSQL
+		members    directory.Store   = directory.NewMemoryStore()
+		soaStore   api.SoAStore      = api.NewMemorySoAStore()
+		assetStore api.AssetStore    = api.NewMemoryAssetStore()
+		riskStore  api.RiskStore     = api.NewMemoryRiskStore()
+		docStore   api.DocumentStore = api.NewMemoryDocumentStore()
+		evidStore  api.EvidenceStore = api.NewMemoryEvidenceStore()
+		auditStore api.AuditStore    // the audit trail is only recorded in PostgreSQL
 	)
 	if s.db != nil {
 		members = directory.NewPgStore(s.db)
 		soaStore = api.NewPgSoAStore(s.db)
 		assetStore = api.NewPgAssetStore(s.db)
 		riskStore = api.NewPgRiskStore(s.db)
+		docStore = api.NewPgDocumentStore(s.db)
+		evidStore = api.NewPgEvidenceStore(s.db)
 		auditStore = api.NewPgAuditStore(s.db)
 	}
 
@@ -113,6 +122,10 @@ func (s *Server) routes() http.Handler {
 	api.NewAssetHandler(assetStore, s.logger).Register(apiMux)
 	api.NewRiskHandler(riskStore, s.logger).Register(apiMux)
 	api.NewAuditHandler(auditStore, s.logger).Register(apiMux)
+
+	uploads := api.NewFiles(s.files, int64(s.cfg.Storage.MaxUploadMB)<<20, s.logger)
+	api.NewDocumentHandler(docStore, uploads, s.logger).Register(apiMux)
+	api.NewEvidenceHandler(evidStore, uploads, s.logger).Register(apiMux)
 	directory.NewHandler(members, s.logger).Register(apiMux)
 
 	// Order matters: the session decides the tenant (auth overwrites the

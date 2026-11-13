@@ -1,16 +1,19 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/storage"
 )
 
 const (
@@ -24,7 +27,16 @@ func testServer(t *testing.T) *Server {
 	t.Setenv("DATABASE_URL", "")
 	cfg := config.Load()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, logger, nil)
+	return New(cfg, logger, nil, testStorage(t))
+}
+
+func testStorage(t *testing.T) storage.Store {
+	t.Helper()
+	store, err := storage.NewDir(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 // login opens a dev session and returns its bearer token.
@@ -195,7 +207,7 @@ func TestAPI_ReadOnlyRolesCannotWrite(t *testing.T) {
 func TestLogin_DisabledUnlessDevModeIsExplicit(t *testing.T) {
 	t.Setenv("AUTH_DEV_MODE", "")
 	t.Setenv("OIDC_ISSUER", "")
-	s := New(config.Load(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	s := New(config.Load(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil, testStorage(t))
 
 	rr := call(s, "", http.MethodPost, "/auth/login", fmt.Sprintf(`{"email":"a@b.com","tenant_id":%q}`, tenantA))
 	if rr.Code != http.StatusNotImplemented {
@@ -292,5 +304,63 @@ func TestOrigin_CrossSiteWritesAreRejected(t *testing.T) {
 	}
 	if rr := call(s, token, http.MethodPost, "/api/v1/assets", `{"name":"CLI","asset_type":"software"}`); rr.Code != http.StatusCreated {
 		t.Errorf("POST without Origin: expected 201, got %d", rr.Code)
+	}
+}
+
+func TestAPI_DocumentsAndEvidenceAreWired(t *testing.T) {
+	s := testServer(t)
+	editor := login(t, s, tenantA, "editor")
+
+	multipartRequest := func(token, path string, fields map[string]string, content string) *httptest.ResponseRecorder {
+		var body bytes.Buffer
+		w := multipart.NewWriter(&body)
+		for k, v := range fields {
+			w.WriteField(k, v)
+		}
+		part, _ := w.CreateFormFile("file", "archivo.txt")
+		part.Write([]byte(content))
+		w.Close()
+		req := httptest.NewRequest(http.MethodPost, path, &body)
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rr := httptest.NewRecorder()
+		s.http.Handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := multipartRequest("", "/api/v1/evidence", nil, "x"); rr.Code != http.StatusUnauthorized {
+		t.Errorf("upload without session: expected 401, got %d", rr.Code)
+	}
+
+	rr := multipartRequest(editor, "/api/v1/evidence", map[string]string{"title": "Captura", "controls": "A.8.13"}, "contenido")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("evidence upload: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var ev struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(rr.Body).Decode(&ev)
+
+	rr = multipartRequest(editor, "/api/v1/documents", map[string]string{"title": "Política", "doc_type": "policy"}, "v1")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("document upload: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// A read-only member downloads but cannot upload; another organization sees nothing.
+	viewer := login(t, s, tenantA, "viewer")
+	if rr := call(s, viewer, http.MethodGet, "/api/v1/evidence/"+ev.ID+"/download", ""); rr.Code != http.StatusOK || rr.Body.String() != "contenido" {
+		t.Errorf("viewer download: %d %q", rr.Code, rr.Body.String())
+	}
+	if rr := multipartRequest(viewer, "/api/v1/evidence", nil, "x"); rr.Code != http.StatusForbidden {
+		t.Errorf("viewer upload: expected 403, got %d", rr.Code)
+	}
+	other := login(t, s, tenantB, "owner")
+	if rr := call(s, other, http.MethodGet, "/api/v1/evidence/"+ev.ID+"/download", ""); rr.Code != http.StatusNotFound {
+		t.Errorf("download from another organization: expected 404, got %d", rr.Code)
+	}
+	if rr := call(s, other, http.MethodGet, "/api/v1/documents", ""); !strings.Contains(rr.Body.String(), `"count":0`) {
+		t.Errorf("another organization lists documents: %s", rr.Body.String())
 	}
 }

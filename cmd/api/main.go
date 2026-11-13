@@ -12,10 +12,12 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/config"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/database"
 	"github.com/jsortizq/politicas-iso27001-pyme/internal/server"
+	"github.com/jsortizq/politicas-iso27001-pyme/internal/storage"
 )
 
 func main() {
@@ -66,8 +68,42 @@ func main() {
 		logger.Warn("DATABASE_URL not set: using in-memory storage, data is lost on restart")
 	}
 
+	// Uploaded files: S3-compatible storage when configured, local disk otherwise.
+	var files storage.Store
+	if cfg.S3.AccessKey != "" {
+		s3, err := storage.NewS3(storage.S3Config{
+			Endpoint:  cfg.S3.Endpoint,
+			Region:    cfg.S3.Region,
+			Bucket:    cfg.S3.Bucket,
+			AccessKey: cfg.S3.AccessKey,
+			SecretKey: cfg.S3.SecretKey,
+			PathStyle: cfg.S3.PathStyle,
+		})
+		if err != nil {
+			logger.Error("invalid S3 configuration", "error", err)
+			os.Exit(1)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err = s3.EnsureBucket(ctx)
+		cancel()
+		if err != nil {
+			logger.Error("object storage is not usable", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("storing files in S3-compatible storage", "endpoint", cfg.S3.Endpoint, "bucket", cfg.S3.Bucket)
+		files = s3
+	} else {
+		dir, err := storage.NewDir(cfg.Storage.Dir)
+		if err != nil {
+			logger.Error("cannot use the local storage directory", "error", err)
+			os.Exit(1)
+		}
+		logger.Warn("S3_ACCESS_KEY not set: storing files on local disk", "dir", cfg.Storage.Dir)
+		files = dir
+	}
+
 	// Create and start the server
-	srv := server.New(cfg, logger, db)
+	srv := server.New(cfg, logger, db, files)
 	if err := srv.Start(); err != nil {
 		logger.Error("server failed", "error", err)
 		os.Exit(1)
