@@ -19,6 +19,7 @@ type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
 	S3       S3Config
+	Storage  StorageConfig
 	Auth     AuthConfig
 	AI       AIConfig
 	Log      LogConfig
@@ -61,6 +62,17 @@ type S3Config struct {
 	Region    string
 	AccessKey string
 	SecretKey string
+	// PathStyle addresses the bucket in the path (MinIO). Set
+	// S3_PATH_STYLE=false for AWS S3 virtual-hosted buckets.
+	PathStyle bool
+}
+
+// StorageConfig holds settings for uploaded files.
+type StorageConfig struct {
+	// Dir is where files are kept on local disk when S3 is not configured.
+	Dir string
+	// MaxUploadMB caps the size of one uploaded file.
+	MaxUploadMB int
 }
 
 // AuthConfig holds authentication settings.
@@ -132,6 +144,11 @@ func Load() *Config {
 			Region:    env("S3_REGION", "us-east-1"),
 			AccessKey: env("S3_ACCESS_KEY", ""),
 			SecretKey: env("S3_SECRET_KEY", ""),
+			PathStyle: envBool("S3_PATH_STYLE", true),
+		},
+		Storage: StorageConfig{
+			Dir:         env("STORAGE_DIR", "data/storage"),
+			MaxUploadMB: envInt("MAX_UPLOAD_MB", 25),
 		},
 		Auth: AuthConfig{
 			Issuer:       env("OIDC_ISSUER", ""),

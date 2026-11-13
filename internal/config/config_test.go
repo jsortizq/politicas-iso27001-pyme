@@ -120,3 +120,20 @@ func TestLoad_MigrateURL(t *testing.T) {
 		t.Errorf("MigrateURL = %q", got)
 	}
 }
+
+func TestLoad_StorageDefaultsAndOverrides(t *testing.T) {
+	t.Setenv("MAX_UPLOAD_MB", "")
+	t.Setenv("STORAGE_DIR", "")
+	t.Setenv("S3_PATH_STYLE", "")
+	cfg := Load()
+	if cfg.Storage.MaxUploadMB != 25 || cfg.Storage.Dir != "data/storage" || !cfg.S3.PathStyle {
+		t.Errorf("defaults: %+v / path style %v", cfg.Storage, cfg.S3.PathStyle)
+	}
+	t.Setenv("MAX_UPLOAD_MB", "100")
+	t.Setenv("STORAGE_DIR", "/var/lib/sgsi")
+	t.Setenv("S3_PATH_STYLE", "false")
+	cfg = Load()
+	if cfg.Storage.MaxUploadMB != 100 || cfg.Storage.Dir != "/var/lib/sgsi" || cfg.S3.PathStyle {
+		t.Errorf("overrides: %+v / path style %v", cfg.Storage, cfg.S3.PathStyle)
+	}
+}
