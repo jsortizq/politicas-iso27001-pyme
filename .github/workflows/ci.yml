@@ -58,39 +58,50 @@ jobs:
         with:
           go-version: '1.23'
 
-      # Service containers cannot pass a command, and MinIO needs "server /data".
-      - name: Start MinIO (S3-compatible storage)
+      # A real S3-compatible service, so request signing is checked by an
+      # independent implementation. Started with docker run because service
+      # containers cannot receive a command or a mounted config file.
+      - name: Start SeaweedFS (S3-compatible storage)
         run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER=sgsi_ci -e MINIO_ROOT_PASSWORD=sgsi_ci_secret \
-            minio/minio server /data
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:9000/minio/health/live && exit 0
+          docker run -d --name s3 -p 8333:8333 \
+            -v "$PWD/deploy/docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro" \
+            chrislusf/seaweedfs server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ || true)
+            if [ "$code" != "000" ]; then
+              echo "S3 gateway answering (HTTP $code)"
+              sleep 5   # let the volume server register before the first write
+              exit 0
+            fi
             sleep 1
           done
-          docker logs minio
+          docker logs s3
           exit 1
 
       - name: Run integration tests (migrations, RLS, stores, audit trail, S3 storage)
         env:
           TEST_DATABASE_URL: postgres://sgsi:sgsi_ci@localhost:5432/sgsi?sslmode=disable
-          TEST_S3_ENDPOINT: http://localhost:9000
-          TEST_S3_ACCESS_KEY: sgsi_ci
-          TEST_S3_SECRET_KEY: sgsi_ci_secret
+          TEST_S3_ENDPOINT: http://localhost:8333
+          TEST_S3_ACCESS_KEY: sgsi_s3
+          TEST_S3_SECRET_KEY: sgsi_s3_dev
         run: go test -race -count=1 -v ./internal/database/... ./internal/directory/... ./internal/api/... ./internal/storage/...
 
       # A skipped test here would mean the real services were not exercised.
       - name: Fail if any integration test was skipped
         env:
           TEST_DATABASE_URL: postgres://sgsi:sgsi_ci@localhost:5432/sgsi?sslmode=disable
-          TEST_S3_ENDPOINT: http://localhost:9000
-          TEST_S3_ACCESS_KEY: sgsi_ci
-          TEST_S3_SECRET_KEY: sgsi_ci_secret
+          TEST_S3_ENDPOINT: http://localhost:8333
+          TEST_S3_ACCESS_KEY: sgsi_s3
+          TEST_S3_SECRET_KEY: sgsi_s3_dev
         run: |
           if go test -count=1 -v ./internal/database/... ./internal/directory/... ./internal/api/... ./internal/storage/... | grep -E '^\s*--- SKIP'; then
             echo "integration tests were skipped"
             exit 1
           fi
+
+      - name: Show storage logs on failure
+        if: failure()
+        run: docker logs s3 2>&1 | tail -60
 
   web:
     name: Frontend (lint, types, build)

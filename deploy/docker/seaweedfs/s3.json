@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "sgsi-dev",
+      "credentials": [
+        { "accessKey": "sgsi_s3", "secretKey": "sgsi_s3_dev" }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ]
+}
