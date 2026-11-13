@@ -89,7 +89,7 @@ Arquitectura: [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTU
 
 ```bash
 cp .env.example .env     # configuración de desarrollo
-make up                  # PostgreSQL, Redis y MinIO (Docker)
+make up                  # PostgreSQL, Redis y almacenamiento S3 (Docker)
 make migrate             # migraciones + catálogo de 93 controles
 make dev                 # API en http://localhost:8080
 make web                 # frontend en http://localhost:3000 (otra terminal)
@@ -116,7 +116,8 @@ persona invitada). Con `AUTH_ALLOW_SIGNUP=false` nadie puede crear organizacione
 El proveedor debe firmar con RS256 y enviar `email_verified` para que las invitaciones
 se acepten. Detalles en [ADR-005](docs/architecture/decisions/ADR-005-identidad-oidc-y-membresias.md).
 
-Los documentos y evidencias se guardan en MinIO (S3) con la configuración de `.env.example`;
+Los documentos y evidencias se guardan en un almacenamiento compatible con S3 (SeaweedFS en
+desarrollo) con la configuración de `.env.example`;
 sin `S3_ACCESS_KEY` se guardan en la carpeta `data/storage`. Los archivos subidos **no se
 analizan con antivirus** y se descargan siempre como adjunto, nunca se abren dentro de la
 aplicación. El límite por archivo es `MAX_UPLOAD_MB` (25 por defecto). Detalles en

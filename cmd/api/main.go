@@ -83,9 +83,18 @@ func main() {
 			logger.Error("invalid S3 configuration", "error", err)
 			os.Exit(1)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		err = s3.EnsureBucket(ctx)
-		cancel()
+		// The storage service may still be starting (docker compose brings
+		// everything up at once), so give it a little time before giving up.
+		for attempt := 1; ; attempt++ {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			err = s3.EnsureBucket(ctx)
+			cancel()
+			if err == nil || attempt == 10 {
+				break
+			}
+			logger.Warn("object storage not ready, retrying", "attempt", attempt, "error", err)
+			time.Sleep(3 * time.Second)
+		}
 		if err != nil {
 			logger.Error("object storage is not usable", "error", err)
 			os.Exit(1)

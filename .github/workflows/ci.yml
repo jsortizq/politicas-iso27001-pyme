@@ -103,6 +103,40 @@ jobs:
         if: failure()
         run: docker logs s3 2>&1 | tail -60
 
+  compose:
+    name: Docker Compose environment (smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exactly what a developer runs: the compose file, the image build,
+      # the migrations inside the container and the development settings.
+      - name: Start the whole stack
+        run: docker compose --profile app up -d --build --wait --wait-timeout 180
+
+      - name: Sign in, upload evidence and read it back through the API
+        run: |
+          set -euo pipefail
+          api=http://localhost:8080
+          curl -sf "$api/readyz"
+          curl -sf -c cookies -H 'Content-Type: application/json' \
+            -d '{"email":"ci@example.com","password":"x","tenant_id":"00000000-0000-4000-8000-000000000001"}' \
+            "$api/auth/login" > /dev/null
+          created=$(curl -sf -b cookies -X POST "$api/api/v1/soa/initialize")
+          echo "$created" | grep -q '"created":93'
+          echo "evidencia de humo $(date)" > evidence.txt
+          id=$(curl -sf -b cookies -F title=Humo -F controls=A.5.1 -F file=@evidence.txt "$api/api/v1/evidence" \
+            | python3 -c 'import sys, json; print(json.load(sys.stdin)["id"])')
+          curl -sf -b cookies "$api/api/v1/evidence/$id/download" | cmp - evidence.txt
+          curl -sf -b cookies "$api/api/v1/evidence/$id/integrity" | grep -q '"intact":true'
+          # Without a session nothing is readable.
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$api/api/v1/evidence/$id/download")" = 401
+          echo "compose smoke test passed"
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose --profile app logs --tail 80
+
   web:
     name: Frontend (lint, types, build)
     runs-on: ubuntu-latest

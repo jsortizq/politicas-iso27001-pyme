@@ -365,7 +365,7 @@ func TestNewS3_Validation(t *testing.T) {
 
 // ── S3 against a real service ──
 
-// Runs against a real S3-compatible service (MinIO in CI) when
+// Runs against a real S3-compatible service (SeaweedFS in CI) when
 // TEST_S3_ENDPOINT, TEST_S3_ACCESS_KEY and TEST_S3_SECRET_KEY are set.
 func TestS3_ContractAgainstRealService(t *testing.T) {
 	endpoint := os.Getenv("TEST_S3_ENDPOINT")

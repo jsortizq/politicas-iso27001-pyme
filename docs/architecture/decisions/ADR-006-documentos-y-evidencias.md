@@ -54,7 +54,12 @@ confiar en que no se han alterado después de recogerlas.
   registrado quién subió y quién aprobó, de modo que un auditor puede verlo.
 - **SDK de AWS:** añade muchas dependencias para tres operaciones. La firma
   Signature V4 propia se comprueba contra los ejemplos publicados por AWS y,
-  en CI, contra un MinIO real.
+  en CI, contra un servicio S3 real (SeaweedFS).
+- **MinIO como almacenamiento de desarrollo:** era la opción inicial, pero la
+  imagen `minio/minio` dejó de estar disponible en Docker Hub (noviembre de
+  2026: el `pull` falla con "repository does not exist"). Como el código solo
+  usa la API S3, se cambió el servicio de desarrollo a SeaweedFS sin tocar
+  la aplicación.
 
 ## Consecuencias
 

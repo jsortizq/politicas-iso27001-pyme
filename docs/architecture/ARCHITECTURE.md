@@ -36,7 +36,7 @@ evidencias y auditorías, con un copiloto de IA integrado que asiste pero no dec
 | Backend             | Go (monolito modular)               | Rendimiento, tipado, concurrencia, CLI existente |
 | Base de datos       | PostgreSQL                          | RLS para multitenancy, jsonb, madurez            |
 | Autenticación       | OIDC (Keycloak o proveedor externo) | Estándar abierto, MFA, federación                |
-| Almacenamiento      | S3 compatible (MinIO en dev)        | Evidencias y documentos fuera de la BD           |
+| Almacenamiento      | S3 compatible (SeaweedFS en dev)    | Evidencias y documentos fuera de la BD           |
 | Cola de trabajos    | Redis + workers Go                  | Procesos IA, informes, análisis asíncronos       |
 | Búsqueda semántica  | pgvector                            | RAG para el copiloto, sin servicio externo       |
 | Contenedores        | Docker + Docker Compose             | Entorno reproducible, dev = producción           |
@@ -85,7 +85,7 @@ politicas-iso27001-pyme/
 │   │   ├── database/            # Conexión, migraciones, RLS
 │   │   ├── auth/                # OIDC, tokens, sesiones
 │   │   ├── tenancy/             # Contexto multiempresa
-│   │   ├── storage/             # Adaptador S3/MinIO
+│   │   ├── storage/             # Adaptador S3
 │   │   ├── logging/             # Registro estructurado
 │   │   └── http/                # Middleware, router, errores
 │   ├── modules/                 # Dominios de negocio

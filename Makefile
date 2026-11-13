@@ -9,8 +9,8 @@ export
 help: ## Muestra esta ayuda
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
 
-up: ## Levanta PostgreSQL, Redis y MinIO
-	docker compose up -d --wait postgres redis minio
+up: ## Levanta PostgreSQL, Redis y el almacenamiento S3
+	docker compose up -d --wait postgres redis storage
 
 down: ## Detiene los servicios (conserva los datos)
 	docker compose down

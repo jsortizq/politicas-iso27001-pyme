@@ -62,7 +62,7 @@ type S3Config struct {
 	Region    string
 	AccessKey string
 	SecretKey string
-	// PathStyle addresses the bucket in the path (MinIO). Set
+	// PathStyle addresses the bucket in the path (SeaweedFS, MinIO). Set
 	// S3_PATH_STYLE=false for AWS S3 virtual-hosted buckets.
 	PathStyle bool
 }
@@ -139,7 +139,7 @@ func Load() *Config {
 			URL: env("REDIS_URL", "redis://localhost:6379/0"),
 		},
 		S3: S3Config{
-			Endpoint:  env("S3_ENDPOINT", "http://localhost:9000"),
+			Endpoint:  env("S3_ENDPOINT", "http://localhost:8333"),
 			Bucket:    env("S3_BUCKET", "sgsi-documents"),
 			Region:    env("S3_REGION", "us-east-1"),
 			AccessKey: env("S3_ACCESS_KEY", ""),

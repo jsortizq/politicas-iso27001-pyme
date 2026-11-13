@@ -21,7 +21,7 @@ type S3Config struct {
 	Bucket    string
 	AccessKey string
 	SecretKey string
-	// PathStyle addresses the bucket as endpoint/bucket/key (MinIO and most
+	// PathStyle addresses the bucket as endpoint/bucket/key (SeaweedFS, MinIO and most
 	// self-hosted services). When false the bucket goes in the host name
 	// (bucket.endpoint/key), as AWS S3 prefers.
 	PathStyle bool
@@ -64,7 +64,7 @@ func NewS3(cfg S3Config) (*S3, error) {
 }
 
 // EnsureBucket creates the bucket if it does not exist. It is meant for
-// development (MinIO starts empty); in production the bucket is normally
+// development (the local service starts empty); in production the bucket is normally
 // provisioned separately and this is a cheap existence check.
 func (s *S3) EnsureBucket(ctx context.Context) error {
 	resp, err := s.do(ctx, http.MethodHead, "", nil, 0, emptySHA256)

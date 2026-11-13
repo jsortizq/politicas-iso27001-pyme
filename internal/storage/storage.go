@@ -3,7 +3,7 @@
 //
 // Two backends implement Store:
 //
-//   - S3: any S3-compatible service (MinIO in development, AWS S3, ...).
+//   - S3: any S3-compatible service (SeaweedFS in development, AWS S3, ...).
 //   - Dir: a directory on local disk, for development without object storage.
 //
 // Objects are private. Nothing in this package produces public links: the

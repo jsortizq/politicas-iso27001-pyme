@@ -1,6 +1,6 @@
 # Entorno de desarrollo local — NO usar estas credenciales en producción.
 #
-#   make up        # levanta PostgreSQL, Redis y MinIO
+#   make up        # levanta PostgreSQL, Redis y el almacenamiento S3
 #   make migrate   # aplica migraciones y carga el catálogo de controles
 #   make dev       # arranca la API contra la base de datos
 #
@@ -35,19 +35,20 @@ services:
       timeout: 3s
       retries: 10
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: sgsi_minio
-      MINIO_ROOT_PASSWORD: sgsi_minio_dev
+  # Almacenamiento compatible con S3 para documentos y evidencias.
+  # (La imagen minio/minio dejó de publicarse en Docker Hub; SeaweedFS ofrece
+  # la misma API S3.) Credenciales de desarrollo en deploy/docker/seaweedfs/s3.json.
+  storage:
+    image: chrislusf/seaweedfs:latest
+    command: server -dir=/data -s3 -s3.config=/etc/seaweedfs/s3.json
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:8333:8333"
     volumes:
-      - miniodata:/data
+      - s3data:/data
+      - ./deploy/docker/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
 
   # Perfil opcional: `docker compose --profile app up --build`
+  # (compila la API en un contenedor, aplica las migraciones y la arranca)
   api:
     profiles: ["app"]
     build:
@@ -58,10 +59,10 @@ services:
       DATABASE_MIGRATE_URL: postgres://sgsi:sgsi_dev@postgres:5432/sgsi?sslmode=disable
       AUTH_DEV_MODE: "true"
       APP_URL: http://localhost:3000
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://storage:8333
       S3_BUCKET: sgsi-documents
-      S3_ACCESS_KEY: sgsi_minio
-      S3_SECRET_KEY: sgsi_minio_dev
+      S3_ACCESS_KEY: sgsi_s3
+      S3_SECRET_KEY: sgsi_s3_dev
       CORS_ORIGINS: http://localhost:3000
       LOG_FORMAT: text
     ports:
@@ -69,9 +70,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      storage:
         condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   pgdata:
-  miniodata:
+  s3data:
