@@ -7,7 +7,7 @@ import { roleLabels } from '@/lib/api';
 import { SessionProvider, useSession } from '@/lib/session';
 
 // Planned modules, shown so the roadmap is visible but not clickable.
-const upcoming = ['Documentos', 'Auditorías'];
+const upcoming = ['Auditorías'];
 
 function Nav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -18,6 +18,8 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
     { name: 'Controles SoA', href: '/dashboard/soa' },
     { name: 'Activos', href: '/dashboard/assets' },
     { name: 'Riesgos', href: '/dashboard/risks' },
+    { name: 'Documentos', href: '/dashboard/documents' },
+    { name: 'Evidencias', href: '/dashboard/evidence' },
     // Members and the activity log are for owners, administrators and auditors.
     ...(canViewAudit
       ? [

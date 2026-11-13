@@ -31,6 +31,28 @@ function describe(event: AuditEvent): string {
       return `Creó la organización «${text(d.name)}»`;
     case 'soa.initialize':
       return `Cargó ${text(d.controls)} controles del Anexo A en la Declaración de Aplicabilidad`;
+    case 'document.create':
+      return `Creó el documento «${text(d.title)}» (${text(d.file_name)})`;
+    case 'document.update':
+      return `Modificó los datos del documento «${text(d.title)}»`;
+    case 'document.version_add':
+      return `Subió la versión ${text(d.version)} de «${text(d.title)}»`;
+    case 'document.submit':
+      return `Envió a revisión la versión ${text(d.version)} de «${text(d.title)}»`;
+    case 'document.approve':
+      return `Aprobó la versión ${text(d.version)} de «${text(d.title)}»`;
+    case 'document.reject':
+      return `Rechazó la versión ${text(d.version)} de «${text(d.title)}»${d.note ? `: ${text(d.note)}` : ''}`;
+    case 'document.obsolete':
+      return `Marcó como obsoleto el documento «${text(d.title)}»`;
+    case 'document.delete':
+      return `Eliminó el documento «${text(d.title)}»`;
+    case 'evidence.create':
+      return `Subió la evidencia «${text(d.title)}» (${text(d.file_name)})`;
+    case 'evidence.update':
+      return `Modificó la evidencia «${text(d.title)}»`;
+    case 'evidence.delete':
+      return `Eliminó la evidencia «${text(d.title)}» (SHA-256 ${text(d.sha256).slice(0, 12)}…)`;
     case 'member.invite':
       return `Invitó a ${text(d.email)} como ${roleName(d.member_role)}`;
     case 'member.join':

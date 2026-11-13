@@ -1,7 +1,17 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { errorMessage, soaApi, type SoAEntry } from '@/lib/api';
+import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import {
+  documentsApi,
+  errorMessage,
+  evidenceApi,
+  soaApi,
+  type Evidence,
+  type SgsiDocument,
+  type SoAEntry,
+} from '@/lib/api';
+import { formatDay } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import { useResource } from '@/lib/useResource';
 import {
@@ -28,6 +38,81 @@ function StatusBadge({ entry }: { entry: SoAEntry }) {
   if (entry.implementation_pct >= 100) return <span className="badge badge-full">Implementado</span>;
   if (entry.implementation_pct > 0) return <span className="badge badge-partial">Parcial</span>;
   return <span className="badge badge-none">Sin iniciar</span>;
+}
+
+/** What backs this control: its documents and evidence, straight from their modules. */
+function Traceability({ controlId }: { controlId: string }) {
+  const [linked, setLinked] = useState<{ documents: SgsiDocument[]; evidence: Evidence[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([documentsApi.list(controlId), evidenceApi.list(controlId)])
+      .then(([documents, evidence]) => {
+        if (!cancelled) setLinked({ documents: documents.data, evidence: evidence.data });
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [controlId]);
+
+  return (
+    <section className="space-y-3 rounded-md border p-4" aria-label="Documentos y evidencias del control">
+      <h3 className="text-sm font-semibold">Respaldo documental</h3>
+      {failed && <p className="text-sm text-muted-foreground">No se pudo cargar el respaldo documental.</p>}
+      {!linked && !failed && <p className="text-sm text-muted-foreground">Cargando…</p>}
+      {linked && linked.documents.length === 0 && linked.evidence.length === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Ningún documento ni evidencia respalda este control todavía. Vincúlalos desde{' '}
+          <Link className="underline underline-offset-4" href="/dashboard/documents">
+            Documentos
+          </Link>{' '}
+          o{' '}
+          <Link className="underline underline-offset-4" href="/dashboard/evidence">
+            Evidencias
+          </Link>
+          .
+        </p>
+      )}
+      {linked && linked.documents.length > 0 && (
+        <ul className="space-y-1.5 text-sm">
+          {linked.documents.map((d) => {
+            const version = d.approved_version ?? d.versions[0].number;
+            return (
+              <li key={d.id} className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <a className="underline underline-offset-4" href={documentsApi.downloadUrl(d.id, version)}>
+                  {d.title}
+                </a>
+                <span className="text-xs text-muted-foreground">
+                  {d.status === 'obsolete'
+                    ? 'Documento obsoleto'
+                    : d.approved_version
+                      ? `Documento · v${d.approved_version} vigente`
+                      : 'Documento · sin aprobar'}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {linked && linked.evidence.length > 0 && (
+        <ul className="space-y-1.5 text-sm">
+          {linked.evidence.map((e) => (
+            <li key={e.id} className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <a className="underline underline-offset-4" href={evidenceApi.downloadUrl(e.id)}>
+                {e.title}
+              </a>
+              <span className="text-xs text-muted-foreground">
+                Evidencia · {formatDay(e.collected_on)}
+                {e.expired && <span className="badge badge-none ml-1.5">Vencida</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
 }
 
 function EditForm({
@@ -165,6 +250,8 @@ function EditForm({
           </Field>
         </div>
       </fieldset>
+
+      <Traceability controlId={entry.control_id} />
 
       {readOnly ? (
         <p className="text-sm text-muted-foreground">Tu rol es de solo lectura.</p>

@@ -1,17 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { assetsApi, risksApi, soaApi, type RiskRating } from '@/lib/api';
+import { assetsApi, documentsApi, evidenceApi, risksApi, soaApi, type RiskRating } from '@/lib/api';
 import { useResource } from '@/lib/useResource';
 import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner } from '@/components/ui/feedback';
 
 const loadOverview = async () => {
-  const [summary, risks, assets] = await Promise.all([
+  const [summary, risks, assets, documents, evidence] = await Promise.all([
     soaApi.summary(),
     risksApi.list(),
     assetsApi.list(),
+    documentsApi.list(),
+    evidenceApi.list(),
   ]);
-  return { summary, risks: risks.data, assets: assets.data };
+  return {
+    summary,
+    risks: risks.data,
+    assets: assets.data,
+    documents: documents.data,
+    evidence: evidence.data,
+  };
 };
 
 const ratingLabels: Record<RiskRating, string> = {
@@ -34,10 +42,15 @@ export default function DashboardPage() {
   if (loading) return <Spinner />;
   if (error || !data) return <ErrorBanner message={error ?? 'Sin datos.'} onRetry={reload} />;
 
-  const { summary, risks, assets } = data;
+  const { summary, risks, assets, documents, evidence } = data;
   const openRisks = risks.filter((r) => r.status !== 'closed');
   const byRating = (rating: RiskRating) => openRisks.filter((r) => r.risk_rating === rating).length;
   const criticalAssets = assets.filter((a) => a.status === 'active' && a.criticality >= 4).length;
+
+  const activeDocuments = documents.filter((d) => d.status !== 'obsolete');
+  const approvedDocuments = activeDocuments.filter((d) => d.status === 'approved').length;
+  const overdueReviews = activeDocuments.filter((d) => d.review_overdue).length;
+  const expiredEvidence = evidence.filter((e) => e.expired).length;
 
   const cards = [
     {
@@ -64,6 +77,18 @@ export default function DashboardPage() {
       sub: `${criticalAssets} de criticidad alta`,
       href: '/dashboard/assets',
     },
+    {
+      title: 'Documentos aprobados',
+      value: `${approvedDocuments} / ${activeDocuments.length}`,
+      sub: overdueReviews > 0 ? `${overdueReviews} con revisión vencida` : 'Sin revisiones vencidas',
+      href: '/dashboard/documents',
+    },
+    {
+      title: 'Evidencias',
+      value: evidence.length,
+      sub: expiredEvidence > 0 ? `${expiredEvidence} vencidas` : 'Ninguna vencida',
+      href: '/dashboard/evidence',
+    },
   ];
 
   return (
@@ -87,7 +112,7 @@ export default function DashboardPage() {
         </EmptyState>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => (
           <Link
             key={card.title}

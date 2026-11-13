@@ -20,13 +20,16 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  // FormData (file uploads) is sent as is: the browser sets the multipart
+  // boundary. Everything else goes as JSON.
+  const isForm = typeof FormData !== 'undefined' && body instanceof FormData;
   let res: Response;
   try {
     res = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: body === undefined || isForm ? undefined : { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
     });
   } catch {
     throw new ApiError(0, 'No se pudo conectar con el servidor.');
@@ -45,6 +48,12 @@ export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 403) return 'Tu rol no permite realizar cambios.';
     if (err.status === 409) return 'Ya existe un registro con ese identificador.';
+    if (err.status === 413) {
+      const limit = err.message.match(/(\d+) MB/)?.[1];
+      return limit
+        ? `El archivo supera el tamaño máximo de ${limit} MB.`
+        : 'El archivo supera el tamaño máximo permitido.';
+    }
     if (err.status >= 500) return 'El servidor tuvo un problema. Intenta de nuevo.';
     return err.message;
   }
@@ -267,3 +276,141 @@ export function ratingFor(level: number): RiskRating {
   if (level >= 5) return 'medium';
   return 'low';
 }
+
+// ── Control catalog ──
+
+export interface CatalogControl {
+  id: string;
+  clause_es: string;
+  category: string;
+}
+
+let catalogPromise: Promise<CatalogControl[]> | null = null;
+
+/** The 93 Annex A controls. Fetched once and shared by every caller. */
+export function loadCatalog(): Promise<CatalogControl[]> {
+  if (!catalogPromise) {
+    catalogPromise = request<{ data: CatalogControl[] }>('/api/v1/catalog/controls')
+      .then((r) => r.data)
+      .catch((err) => {
+        catalogPromise = null; // let the next caller retry
+        throw err;
+      });
+  }
+  return catalogPromise;
+}
+
+// ── Files ──
+
+export interface StoredFile {
+  file_name: string;
+  mime_type: string;
+  file_size: number;
+  sha256: string;
+}
+
+export interface Integrity {
+  intact: boolean;
+  expected_sha256: string;
+  actual_sha256?: string;
+  missing?: boolean;
+}
+
+const withControl = (path: string, control?: string) =>
+  control ? `${path}?control=${encodeURIComponent(control)}` : path;
+
+// ── Documents ──
+
+export type DocumentType = 'policy' | 'procedure' | 'record' | 'template' | 'report' | 'other';
+export type DocumentStatus = 'draft' | 'review' | 'approved' | 'obsolete';
+export type VersionStatus = 'draft' | 'in_review' | 'approved' | 'rejected' | 'superseded';
+
+export interface DocumentVersion extends StoredFile {
+  number: number;
+  status: VersionStatus;
+  change_summary: string;
+  uploaded_by: string;
+  uploaded_at: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  review_note?: string;
+}
+
+export interface SgsiDocument {
+  id: string;
+  title: string;
+  doc_type: DocumentType;
+  status: DocumentStatus;
+  owner: string;
+  next_review?: string;
+  review_overdue: boolean;
+  controls: string[];
+  /** Newest first. */
+  versions: DocumentVersion[];
+  /** Number of the version in force, if any. */
+  approved_version?: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DocumentMeta {
+  title: string;
+  doc_type: DocumentType;
+  owner: string;
+  next_review: string;
+  controls: string[];
+}
+
+const doc = (id: string) => `/api/v1/documents/${id}`;
+
+export const documentsApi = {
+  list: (control?: string) =>
+    request<ListResponse<SgsiDocument>>(withControl('/api/v1/documents', control)),
+  create: (form: FormData) => request<SgsiDocument>('/api/v1/documents', 'POST', form),
+  update: (id: string, meta: DocumentMeta) => request<SgsiDocument>(doc(id), 'PUT', meta),
+  remove: (id: string) => request<void>(doc(id), 'DELETE'),
+  obsolete: (id: string) => request<SgsiDocument>(`${doc(id)}/obsolete`, 'POST'),
+  addVersion: (id: string, form: FormData) =>
+    request<SgsiDocument>(`${doc(id)}/versions`, 'POST', form),
+  submit: (id: string, n: number) => request<SgsiDocument>(`${doc(id)}/versions/${n}/submit`, 'POST'),
+  approve: (id: string, n: number, note: string) =>
+    request<SgsiDocument>(`${doc(id)}/versions/${n}/approve`, 'POST', { note }),
+  reject: (id: string, n: number, note: string) =>
+    request<SgsiDocument>(`${doc(id)}/versions/${n}/reject`, 'POST', { note }),
+  integrity: (id: string, n: number) => request<Integrity>(`${doc(id)}/versions/${n}/integrity`),
+  /** Plain link target: the browser downloads the file with the session cookie. */
+  downloadUrl: (id: string, n: number) => `${doc(id)}/versions/${n}/download`,
+};
+
+// ── Evidence ──
+
+export interface Evidence extends StoredFile {
+  id: string;
+  title: string;
+  description: string;
+  collected_on: string;
+  valid_until?: string;
+  expired: boolean;
+  controls: string[];
+  uploaded_by: string;
+  created_at: string;
+}
+
+export interface EvidenceMeta {
+  title: string;
+  description: string;
+  collected_on: string;
+  valid_until: string;
+  controls: string[];
+}
+
+export const evidenceApi = {
+  list: (control?: string) =>
+    request<ListResponse<Evidence>>(withControl('/api/v1/evidence', control)),
+  create: (form: FormData) => request<Evidence>('/api/v1/evidence', 'POST', form),
+  update: (id: string, meta: EvidenceMeta) => request<Evidence>(`/api/v1/evidence/${id}`, 'PUT', meta),
+  remove: (id: string) => request<void>(`/api/v1/evidence/${id}`, 'DELETE'),
+  integrity: (id: string) => request<Integrity>(`/api/v1/evidence/${id}/integrity`),
+  downloadUrl: (id: string) => `/api/v1/evidence/${id}/download`,
+};
