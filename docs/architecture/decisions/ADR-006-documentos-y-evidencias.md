@@ -29,7 +29,9 @@ confiar en que no se han alterado después de recogerlas.
    versión sustituye a la vigente; un índice único impide que haya dos
    aprobadas. Propietarios y administradores aprueban.
 5. **Un documento que llegó a aprobarse no se borra:** se marca obsoleto y
-   queda congelado, con sus versiones disponibles para consulta.
+   queda congelado, con sus versiones disponibles para consulta. La
+   comprobación se hace en la misma operación que borra, con el documento
+   bloqueado, para que una aprobación simultánea no se pierda.
 6. **Vínculo con los controles del Anexo A**, no con las entradas del SoA de
    cada empresa, para que el respaldo documental no dependa de que el
    control esté evaluado.
