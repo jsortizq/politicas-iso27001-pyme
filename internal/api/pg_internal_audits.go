@@ -185,9 +185,9 @@ func (s *PgInternalAuditStore) Mutate(ctx context.Context, tenantID, id string, 
 		if err != nil {
 			return err
 		}
-		before := map[string]bool{}
+		before := map[string]Finding{}
 		for _, f := range a.Findings {
-			before[f.ID] = true
+			before[f.ID] = f
 		}
 
 		note, err := change(a)
@@ -219,7 +219,11 @@ func (s *PgInternalAuditStore) Mutate(ctx context.Context, tenantID, id string, 
 			if f.ClosedAt != nil {
 				closedAt = sql.NullTime{Time: *f.ClosedAt, Valid: true}
 			}
-			if !before[f.ID] {
+			previous, existed := before[f.ID]
+			if existed && previous == f {
+				continue // untouched: leave the row (and its updated_at) alone
+			}
+			if !existed {
 				_, err = tx.ExecContext(ctx, `
 					INSERT INTO audit_findings (id, tenant_id, audit_id, number, severity, control_id, clause,
 						description, evidence, root_cause, corrective_action, responsible, due_date, status,
@@ -267,11 +271,19 @@ func (s *PgInternalAuditStore) Delete(ctx context.Context, tenantID, id string) 
 		return err
 	}
 	return database.TenantTx(ctx, s.db, tenantID, func(tx *sql.Tx) error {
-		var title string
-		// Findings and control links go with the audit (ON DELETE CASCADE).
-		err := tx.QueryRowContext(ctx,
-			`DELETE FROM audits WHERE tenant_id = $1 AND id = $2 RETURNING title`, tenantID, id).Scan(&title)
+		// The row is locked so the status checked is the status deleted: an
+		// audit started meanwhile keeps its findings.
+		existing, err := s.load(ctx, tx, tenantID, id, true)
 		if err != nil {
+			return err
+		}
+		if err := existing.deletable(); err != nil {
+			return err
+		}
+		title := existing.Title
+		// Findings and control links go with the audit (ON DELETE CASCADE).
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM audits WHERE tenant_id = $1 AND id = $2`, tenantID, id); err != nil {
 			return pgErr(err)
 		}
 		return audit(ctx, tx, tenantID, "audit.delete", "audit", id, map[string]any{"title": title})

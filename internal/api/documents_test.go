@@ -170,6 +170,39 @@ func (e *fileEnv) newDocument(title string) Document {
 
 // ── Documents ──
 
+// Deleting a document while its version is being approved must never both
+// succeed: an approved document, and its file, are part of the record.
+func TestDocument_DeleteRacesWithApproval(t *testing.T) {
+	eachFileBackend(t, func(t *testing.T, e *fileEnv) {
+		for i := 0; i < 20; i++ {
+			doc := e.newDocument("Política en disputa")
+			base := "/v1/documents/" + doc.ID
+			mustStatus(t, e.as("editor", http.MethodPost, base+"/versions/1/submit", nil), http.StatusOK, "submit")
+			var deleted, approved int
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				deleted = e.as("admin", http.MethodDelete, base, nil).Code
+			}()
+			go func() {
+				defer wg.Done()
+				approved = e.as("owner", http.MethodPost, base+"/versions/1/approve", nil).Code
+			}()
+			wg.Wait()
+
+			switch {
+			case deleted == http.StatusNoContent && approved == http.StatusNotFound:
+				mustStatus(t, e.as("admin", http.MethodGet, base, nil), http.StatusNotFound, "get after delete won")
+			case deleted == http.StatusConflict && approved == http.StatusOK:
+				mustStatus(t, e.as("admin", http.MethodGet, base+"/versions/1/download", nil), http.StatusOK, "file after approval won")
+			default:
+				t.Fatalf("round %d: delete=%d approve=%d; exactly one must win", i, deleted, approved)
+			}
+		}
+	})
+}
+
 func TestDocument_ApprovalLifecycle(t *testing.T) {
 	eachFileBackend(t, func(t *testing.T, e *fileEnv) {
 		doc := e.newDocument("Política de seguridad")

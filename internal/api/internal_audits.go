@@ -203,6 +203,15 @@ func (a *InternalAudit) cancel(reason string) error {
 	return nil
 }
 
+// deletable guards deletion: only an audit that never started leaves no
+// history worth keeping. Stores check it in the same step that deletes.
+func (a *InternalAudit) deletable() error {
+	if a.Status != AuditPlanned {
+		return noTransition("only a planned audit can be deleted; cancel it to keep its record")
+	}
+	return nil
+}
+
 // editable reports whether the audit's own data may still change.
 func (a *InternalAudit) editable() bool {
 	return a.Status == AuditPlanned || a.Status == AuditInProgress
@@ -390,6 +399,8 @@ type InternalAuditStore interface {
 	// control links and its findings atomically, with the audit note
 	// returned by change. If change fails nothing is saved.
 	Mutate(ctx context.Context, tenantID, id string, change func(a *InternalAudit) (AuditNote, error)) (*InternalAudit, error)
+	// Delete removes an audit that is still planned; any other status is
+	// refused in the same step, so a concurrent start cannot be lost.
 	Delete(ctx context.Context, tenantID, id string) error
 }
 
@@ -596,17 +607,7 @@ func (h *InternalAuditHandler) handleDelete(w http.ResponseWriter, r *http.Reque
 	if user == nil {
 		return
 	}
-	existing, err := h.store.Get(r.Context(), user.TenantID, r.PathValue("id"))
-	if err != nil {
-		h.fail(w, err, "get")
-		return
-	}
-	// Only an audit that never started leaves no history worth keeping.
-	if existing.Status != AuditPlanned {
-		writeError(w, http.StatusConflict, "only a planned audit can be deleted; cancel it to keep its record")
-		return
-	}
-	if err := h.store.Delete(r.Context(), user.TenantID, existing.ID); err != nil {
+	if err := h.store.Delete(r.Context(), user.TenantID, r.PathValue("id")); err != nil {
 		h.fail(w, err, "delete")
 		return
 	}
@@ -876,5 +877,15 @@ func (m *MemoryInternalAuditStore) Mutate(_ context.Context, tenantID, id string
 }
 
 func (m *MemoryInternalAuditStore) Delete(_ context.Context, tenantID, id string) error {
-	return m.t.remove(tenantID, id)
+	m.t.mu.Lock()
+	defer m.t.mu.Unlock()
+	stored, ok := m.t.rows[tenantID][id]
+	if !ok {
+		return ErrNotFound
+	}
+	if err := stored.deletable(); err != nil {
+		return err
+	}
+	delete(m.t.rows[tenantID], id)
+	return nil
 }

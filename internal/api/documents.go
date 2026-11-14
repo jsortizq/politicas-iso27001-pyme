@@ -229,6 +229,15 @@ func (d *Document) everApproved() bool {
 	return false
 }
 
+// deletable guards deletion: an approved document is part of the record.
+// Stores check it in the same step that deletes.
+func (d *Document) deletable() error {
+	if d.everApproved() {
+		return noTransition("a document that was approved cannot be deleted; mark it obsolete to keep its history")
+	}
+	return nil
+}
+
 // AuditNote describes a change for the audit trail.
 type AuditNote struct {
 	Action string
@@ -248,7 +257,9 @@ type DocumentStore interface {
 	// status and versions atomically. change returns the audit note for
 	// what it did; if it returns an error nothing is saved.
 	Mutate(ctx context.Context, tenantID, id string, change func(d *Document) (AuditNote, error)) (*Document, error)
-	// Delete removes the document and returns the storage keys of its files.
+	// Delete removes a document that was never approved and returns the
+	// storage keys of its files. An approved one is refused in the same
+	// step, so a concurrent approval cannot be lost.
 	Delete(ctx context.Context, tenantID, id string) ([]string, error)
 }
 
@@ -419,17 +430,7 @@ func (h *DocumentHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "only owners and administrators can delete documents")
 		return
 	}
-	existing, err := h.store.Get(r.Context(), user.TenantID, r.PathValue("id"))
-	if err != nil {
-		h.fail(w, err, "get")
-		return
-	}
-	if existing.everApproved() {
-		writeError(w, http.StatusConflict,
-			"a document that was approved cannot be deleted; mark it obsolete to keep its history")
-		return
-	}
-	keys, err := h.store.Delete(r.Context(), user.TenantID, existing.ID)
+	keys, err := h.store.Delete(r.Context(), user.TenantID, r.PathValue("id"))
 	if err != nil {
 		h.fail(w, err, "delete")
 		return
@@ -759,6 +760,9 @@ func (m *MemoryDocumentStore) Delete(_ context.Context, tenantID, id string) ([]
 	stored, ok := m.t.rows[tenantID][id]
 	if !ok {
 		return nil, ErrNotFound
+	}
+	if err := stored.deletable(); err != nil {
+		return nil, err
 	}
 	keys := make([]string, 0, len(stored.Versions))
 	for _, v := range stored.Versions {

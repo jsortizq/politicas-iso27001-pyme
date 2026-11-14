@@ -344,6 +344,10 @@ func (s *PgDocumentStore) Delete(ctx context.Context, tenantID, id string) ([]st
 		if err != nil {
 			return err
 		}
+		// Checked on the locked row: a version approved meanwhile is kept.
+		if err := doc.deletable(); err != nil {
+			return err
+		}
 		hashes := make([]string, 0, len(doc.Versions))
 		for _, v := range doc.Versions {
 			keys = append(keys, v.StorageKey)

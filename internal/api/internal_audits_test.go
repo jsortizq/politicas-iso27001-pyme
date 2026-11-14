@@ -208,6 +208,38 @@ func TestInternalAudit_CancelAndDelete(t *testing.T) {
 	})
 }
 
+// Deleting and starting the same audit at once must never both succeed:
+// a started audit is history, and history is not deleted.
+func TestInternalAudit_DeleteRacesWithStart(t *testing.T) {
+	eachFileBackend(t, func(t *testing.T, e *fileEnv) {
+		for i := 0; i < 20; i++ {
+			a := e.newAudit("Auditoría en disputa")
+			base := "/v1/audits/" + a.ID
+			var deleted, started int
+			var wg sync.WaitGroup
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				deleted = e.as("admin", http.MethodDelete, base, nil).Code
+			}()
+			go func() {
+				defer wg.Done()
+				started = e.as("editor", http.MethodPost, base+"/start", nil).Code
+			}()
+			wg.Wait()
+
+			switch {
+			case deleted == http.StatusNoContent && started == http.StatusNotFound:
+				mustStatus(t, e.as("admin", http.MethodGet, base, nil), http.StatusNotFound, "get after delete won")
+			case deleted == http.StatusConflict && started == http.StatusOK:
+				mustStatus(t, e.as("admin", http.MethodGet, base, nil), http.StatusOK, "get after start won")
+			default:
+				t.Fatalf("round %d: delete=%d start=%d; exactly one must win", i, deleted, started)
+			}
+		}
+	})
+}
+
 func TestInternalAudit_ValidationAndRoles(t *testing.T) {
 	eachFileBackend(t, func(t *testing.T, e *fileEnv) {
 		for name, body := range map[string]string{

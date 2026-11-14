@@ -364,3 +364,42 @@ func TestAPI_DocumentsAndEvidenceAreWired(t *testing.T) {
 		t.Errorf("another organization lists documents: %s", rr.Body.String())
 	}
 }
+
+func TestAPI_InternalAuditsAreWired(t *testing.T) {
+	s := testServer(t)
+	editor := login(t, s, tenantA, "editor")
+
+	rr := call(s, editor, http.MethodPost, "/api/v1/audits", `{"title":"Auditoría interna 2026"}`)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("create audit: expected 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(rr.Body).Decode(&created)
+	base := "/api/v1/audits/" + created.ID
+
+	if rr := call(s, editor, http.MethodPost, base+"/start", ""); rr.Code != http.StatusOK {
+		t.Fatalf("start: expected 200, got %d", rr.Code)
+	}
+	rr = call(s, editor, http.MethodPost, base+"/findings", `{"severity":"minor_nc","description":"Registro sin fecha"}`)
+	if rr.Code != http.StatusCreated || !strings.Contains(rr.Body.String(), `"number":1`) {
+		t.Fatalf("add finding: %d %s", rr.Code, rr.Body.String())
+	}
+
+	// Read-only members see the audit; the write guard stops them before the handler.
+	viewer := login(t, s, tenantA, "viewer")
+	if rr := call(s, viewer, http.MethodGet, base, ""); rr.Code != http.StatusOK {
+		t.Errorf("viewer read: expected 200, got %d", rr.Code)
+	}
+	if rr := call(s, viewer, http.MethodPost, base+"/complete", `{"summary":"x"}`); rr.Code != http.StatusForbidden {
+		t.Errorf("viewer completing: expected 403, got %d", rr.Code)
+	}
+	if rr := call(s, "", http.MethodGet, base, ""); rr.Code != http.StatusUnauthorized {
+		t.Errorf("no session: expected 401, got %d", rr.Code)
+	}
+	other := login(t, s, tenantB, "owner")
+	if rr := call(s, other, http.MethodGet, base, ""); rr.Code != http.StatusNotFound {
+		t.Errorf("another organization: expected 404, got %d", rr.Code)
+	}
+}
