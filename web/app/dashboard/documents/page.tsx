@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ApiError,
   documentsApi,
@@ -292,6 +292,23 @@ function DocumentPanel({
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<'obsolete' | 'delete' | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // The list may be minutes old and a colleague may have acted since:
+  // open the panel on the current state, not the listed one.
+  useEffect(() => {
+    let cancelled = false;
+    documentsApi
+      .get(initial.id)
+      .then((fresh) => {
+        if (cancelled) return;
+        setDoc(fresh);
+        setMeta(metaOf(fresh));
+      })
+      .catch(() => undefined); // the listed copy stays; actions report real errors
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.id]);
 
   const obsolete = doc.status === 'obsolete';
   const editable = canWrite && !obsolete;

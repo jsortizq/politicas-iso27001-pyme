@@ -1,17 +1,26 @@
 'use client';
 
 import Link from 'next/link';
-import { assetsApi, documentsApi, evidenceApi, risksApi, soaApi, type RiskRating } from '@/lib/api';
+import {
+  assetsApi,
+  auditsApi,
+  documentsApi,
+  evidenceApi,
+  risksApi,
+  soaApi,
+  type RiskRating,
+} from '@/lib/api';
 import { useResource } from '@/lib/useResource';
 import { EmptyState, ErrorBanner, PageHeader, ProgressBar, Spinner } from '@/components/ui/feedback';
 
 const loadOverview = async () => {
-  const [summary, risks, assets, documents, evidence] = await Promise.all([
+  const [summary, risks, assets, documents, evidence, audits] = await Promise.all([
     soaApi.summary(),
     risksApi.list(),
     assetsApi.list(),
     documentsApi.list(),
     evidenceApi.list(),
+    auditsApi.list(),
   ]);
   return {
     summary,
@@ -19,6 +28,7 @@ const loadOverview = async () => {
     assets: assets.data,
     documents: documents.data,
     evidence: evidence.data,
+    audits: audits.data,
   };
 };
 
@@ -42,7 +52,7 @@ export default function DashboardPage() {
   if (loading) return <Spinner />;
   if (error || !data) return <ErrorBanner message={error ?? 'Sin datos.'} onRetry={reload} />;
 
-  const { summary, risks, assets, documents, evidence } = data;
+  const { summary, risks, assets, documents, evidence, audits } = data;
   const openRisks = risks.filter((r) => r.status !== 'closed');
   const byRating = (rating: RiskRating) => openRisks.filter((r) => r.risk_rating === rating).length;
   const criticalAssets = assets.filter((a) => a.status === 'active' && a.criticality >= 4).length;
@@ -51,6 +61,16 @@ export default function DashboardPage() {
   const approvedDocuments = activeDocuments.filter((d) => d.status === 'approved').length;
   const overdueReviews = activeDocuments.filter((d) => d.review_overdue).length;
   const expiredEvidence = evidence.filter((e) => e.expired).length;
+
+  // Findings of cancelled audits are not being followed up.
+  const pendingFindings = audits
+    .filter((a) => a.status !== 'cancelled')
+    .flatMap((a) => a.findings)
+    .filter((f) => f.status !== 'closed');
+  const overdueFindings = pendingFindings.filter((f) => f.overdue).length;
+  const openNonconformities = pendingFindings.filter(
+    (f) => f.severity === 'major_nc' || f.severity === 'minor_nc',
+  ).length;
 
   const cards = [
     {
@@ -70,6 +90,14 @@ export default function DashboardPage() {
       value: openRisks.length,
       sub: `${byRating('critical')} críticos · ${byRating('high')} altos`,
       href: '/dashboard/risks',
+    },
+    {
+      title: 'Hallazgos sin cerrar',
+      value: pendingFindings.length,
+      sub:
+        `${openNonconformities} no conformidades` +
+        (overdueFindings > 0 ? ` · ${overdueFindings} vencidos` : ''),
+      href: '/dashboard/audits',
     },
     {
       title: 'Activos',

@@ -3,11 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
+  auditsApi,
   documentsApi,
   errorMessage,
   evidenceApi,
+  findingStatusLabels,
+  severityLabels,
   soaApi,
   type Evidence,
+  type Finding,
   type SgsiDocument,
   type SoAEntry,
 } from '@/lib/api';
@@ -42,14 +46,24 @@ function StatusBadge({ entry }: { entry: SoAEntry }) {
 
 /** What backs this control: its documents and evidence, straight from their modules. */
 function Traceability({ controlId }: { controlId: string }) {
-  const [linked, setLinked] = useState<{ documents: SgsiDocument[]; evidence: Evidence[] } | null>(null);
+  const [linked, setLinked] = useState<{
+    documents: SgsiDocument[];
+    evidence: Evidence[];
+    findings: { audit: string; finding: Finding }[];
+  } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([documentsApi.list(controlId), evidenceApi.list(controlId)])
-      .then(([documents, evidence]) => {
-        if (!cancelled) setLinked({ documents: documents.data, evidence: evidence.data });
+    Promise.all([documentsApi.list(controlId), evidenceApi.list(controlId), auditsApi.list()])
+      .then(([documents, evidence, audits]) => {
+        if (cancelled) return;
+        // Findings raised against this control that are still being followed up.
+        const findings = audits.data
+          .filter((a) => a.status !== 'cancelled')
+          .flatMap((a) => a.findings.map((finding) => ({ audit: a.title, finding })))
+          .filter(({ finding }) => finding.control_id === controlId && finding.status !== 'closed');
+        setLinked({ documents: documents.data, evidence: evidence.data, findings });
       })
       .catch(() => !cancelled && setFailed(true));
     return () => {
@@ -74,6 +88,21 @@ function Traceability({ controlId }: { controlId: string }) {
           </Link>
           .
         </p>
+      )}
+      {linked && linked.findings.length > 0 && (
+        <ul className="space-y-1.5 text-sm" aria-label="Hallazgos de auditoría sin cerrar">
+          {linked.findings.map(({ audit, finding }) => (
+            <li key={finding.id} className="rounded-md border border-red-200 bg-red-50 p-2 dark:border-red-900 dark:bg-red-950/30">
+              <span className="font-medium">
+                {severityLabels[finding.severity]} sin cerrar ({findingStatusLabels[finding.status].toLowerCase()})
+              </span>
+              <span className="block">{finding.description}</span>
+              <span className="text-xs text-muted-foreground">
+                H-{finding.number} · {audit}
+              </span>
+            </li>
+          ))}
+        </ul>
       )}
       {linked && linked.documents.length > 0 && (
         <ul className="space-y-1.5 text-sm">

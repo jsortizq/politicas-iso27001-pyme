@@ -137,3 +137,52 @@ export function Panel({
     document.body,
   );
 }
+
+/**
+ * Asks for a written note before a consequential action (cancel, close,
+ * reopen, reject…). The action only runs with a non-empty note.
+ */
+export function NoteForm({
+  label,
+  hint,
+  confirmLabel,
+  danger = false,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  label: string;
+  hint?: string;
+  confirmLabel: string;
+  danger?: boolean;
+  busy: boolean;
+  onConfirm: (note: string) => void;
+  onCancel: () => void;
+}) {
+  const [note, setNote] = useState('');
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onConfirm(note);
+      }}
+    >
+      <Field label={label} hint={hint}>
+        <textarea className="input" rows={3} required autoFocus value={note} onChange={(e) => setNote(e.target.value)} />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="submit"
+          className={`btn h-8 px-3 ${danger ? 'btn-danger' : 'btn-primary'}`}
+          disabled={busy || !note.trim()}
+        >
+          {confirmLabel}
+        </button>
+        <button type="button" className="btn btn-outline h-8 px-3" onClick={onCancel}>
+          Volver
+        </button>
+      </div>
+    </form>
+  );
+}

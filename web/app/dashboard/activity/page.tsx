@@ -53,6 +53,30 @@ function describe(event: AuditEvent): string {
       return `Modificó la evidencia «${text(d.title)}»`;
     case 'evidence.delete':
       return `Eliminó la evidencia «${text(d.title)}» (SHA-256 ${text(d.sha256).slice(0, 12)}…)`;
+    case 'audit.create':
+      return `Programó la auditoría «${text(d.title)}»`;
+    case 'audit.update':
+      return `Modificó los datos de la auditoría «${text(d.title)}»`;
+    case 'audit.start':
+      return `Inició la auditoría «${text(d.title)}»`;
+    case 'audit.complete':
+      return `Completó la auditoría «${text(d.title)}» con ${text(d.findings)} hallazgos`;
+    case 'audit.cancel':
+      return `Canceló la auditoría «${text(d.title)}»: ${text(d.reason)}`;
+    case 'audit.delete':
+      return `Eliminó la auditoría planificada «${text(d.title)}»`;
+    case 'finding.create':
+      return `Registró el hallazgo H-${text(d.finding)} en «${text(d.audit)}»`;
+    case 'finding.update':
+      return `Modificó el hallazgo H-${text(d.finding)} de «${text(d.audit)}»`;
+    case 'finding.delete':
+      return `Quitó el hallazgo H-${text(d.finding)} de «${text(d.audit)}»`;
+    case 'finding.plan':
+      return `Actualizó el plan de acción del hallazgo H-${text(d.finding)} de «${text(d.audit)}»`;
+    case 'finding.close':
+      return `Cerró el hallazgo H-${text(d.finding)} de «${text(d.audit)}»: ${text(d.verification)}`;
+    case 'finding.reopen':
+      return `Reabrió el hallazgo H-${text(d.finding)} de «${text(d.audit)}»: ${text(d.note)}`;
     case 'member.invite':
       return `Invitó a ${text(d.email)} como ${roleName(d.member_role)}`;
     case 'member.join':

@@ -367,6 +367,7 @@ const doc = (id: string) => `/api/v1/documents/${id}`;
 export const documentsApi = {
   list: (control?: string) =>
     request<ListResponse<SgsiDocument>>(withControl('/api/v1/documents', control)),
+  get: (id: string) => request<SgsiDocument>(doc(id)),
   create: (form: FormData) => request<SgsiDocument>('/api/v1/documents', 'POST', form),
   update: (id: string, meta: DocumentMeta) => request<SgsiDocument>(doc(id), 'PUT', meta),
   remove: (id: string) => request<void>(doc(id), 'DELETE'),
@@ -413,4 +414,125 @@ export const evidenceApi = {
   remove: (id: string) => request<void>(`/api/v1/evidence/${id}`, 'DELETE'),
   integrity: (id: string) => request<Integrity>(`/api/v1/evidence/${id}/integrity`),
   downloadUrl: (id: string) => `/api/v1/evidence/${id}/download`,
+};
+
+// ── Internal audits and findings ──
+
+export type AuditType = 'internal' | 'external' | 'surveillance';
+export type InternalAuditStatus = 'planned' | 'in_progress' | 'completed' | 'cancelled';
+export type FindingSeverity = 'major_nc' | 'minor_nc' | 'observation' | 'opportunity';
+export type FindingStatus = 'open' | 'in_progress' | 'implemented' | 'closed';
+
+export interface Finding {
+  id: string;
+  /** 1, 2, 3… within its audit. */
+  number: number;
+  severity: FindingSeverity;
+  control_id?: string;
+  clause: string;
+  description: string;
+  evidence: string;
+  root_cause: string;
+  corrective_action: string;
+  responsible: string;
+  due_date?: string;
+  status: FindingStatus;
+  overdue: boolean;
+  verification: string;
+  closed_by?: string;
+  closed_at?: string;
+  reopen_note?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InternalAudit {
+  id: string;
+  title: string;
+  audit_type: AuditType;
+  status: InternalAuditStatus;
+  scope: string;
+  criteria: string;
+  lead_auditor: string;
+  planned_date?: string;
+  completed_date?: string;
+  /** Conclusions; written when the audit is completed. */
+  summary: string;
+  cancel_reason?: string;
+  controls: string[];
+  findings: Finding[];
+  open_findings: number;
+  overdue_findings: number;
+  created_by: string;
+}
+
+export interface AuditFields {
+  title: string;
+  audit_type: AuditType;
+  scope: string;
+  criteria: string;
+  lead_auditor: string;
+  planned_date: string;
+  controls: string[];
+}
+
+export interface FindingContent {
+  severity: FindingSeverity;
+  control_id: string;
+  clause: string;
+  description: string;
+  evidence: string;
+}
+
+export interface FindingPlan {
+  root_cause: string;
+  corrective_action: string;
+  responsible: string;
+  due_date: string;
+  status: Exclude<FindingStatus, 'closed'>;
+}
+
+const audit = (id: string) => `/api/v1/audits/${id}`;
+const finding = (auditId: string, findingId: string) => `${audit(auditId)}/findings/${findingId}`;
+
+/** Internal audits. (auditApi, above, is the activity log.) */
+export const auditsApi = {
+  list: () => request<ListResponse<InternalAudit>>('/api/v1/audits'),
+  get: (id: string) => request<InternalAudit>(audit(id)),
+  create: (fields: AuditFields) => request<InternalAudit>('/api/v1/audits', 'POST', fields),
+  update: (id: string, fields: AuditFields) => request<InternalAudit>(audit(id), 'PUT', fields),
+  remove: (id: string) => request<void>(audit(id), 'DELETE'),
+  start: (id: string) => request<InternalAudit>(`${audit(id)}/start`, 'POST'),
+  complete: (id: string, summary: string, completedDate: string) =>
+    request<InternalAudit>(`${audit(id)}/complete`, 'POST', { summary, completed_date: completedDate }),
+  cancel: (id: string, reason: string) =>
+    request<InternalAudit>(`${audit(id)}/cancel`, 'POST', { reason }),
+
+  addFinding: (id: string, content: FindingContent) =>
+    request<InternalAudit>(`${audit(id)}/findings`, 'POST', content),
+  updateFinding: (id: string, findingId: string, content: FindingContent) =>
+    request<InternalAudit>(finding(id, findingId), 'PUT', content),
+  removeFinding: (id: string, findingId: string) =>
+    request<InternalAudit>(finding(id, findingId), 'DELETE'),
+  planFinding: (id: string, findingId: string, plan: FindingPlan) =>
+    request<InternalAudit>(`${finding(id, findingId)}/action`, 'PUT', plan),
+  closeFinding: (id: string, findingId: string, verification: string) =>
+    request<InternalAudit>(`${finding(id, findingId)}/close`, 'POST', { verification }),
+  reopenFinding: (id: string, findingId: string, note: string) =>
+    request<InternalAudit>(`${finding(id, findingId)}/reopen`, 'POST', { note }),
+};
+
+export const severityLabels: Record<FindingSeverity, string> = {
+  major_nc: 'No conformidad mayor',
+  minor_nc: 'No conformidad menor',
+  observation: 'Observación',
+  opportunity: 'Oportunidad de mejora',
+};
+
+export const findingStatusLabels: Record<FindingStatus, string> = {
+  open: 'Abierto',
+  in_progress: 'En curso',
+  implemented: 'Implementado',
+  closed: 'Cerrado',
 };

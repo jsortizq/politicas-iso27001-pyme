@@ -6,9 +6,6 @@ import { usePathname } from 'next/navigation';
 import { roleLabels } from '@/lib/api';
 import { SessionProvider, useSession } from '@/lib/session';
 
-// Planned modules, shown so the roadmap is visible but not clickable.
-const upcoming = ['Auditorías'];
-
 function Nav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { canViewAudit } = useSession();
@@ -20,6 +17,7 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
     { name: 'Riesgos', href: '/dashboard/risks' },
     { name: 'Documentos', href: '/dashboard/documents' },
     { name: 'Evidencias', href: '/dashboard/evidence' },
+    { name: 'Auditorías', href: '/dashboard/audits' },
     // Members and the activity log are for owners, administrators and auditors.
     ...(canViewAudit
       ? [
@@ -32,7 +30,9 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex-1 space-y-1 px-2 py-4" aria-label="Principal">
       {navigation.map((item) => {
-        const active = pathname === item.href;
+        // Sub-pages (e.g. an audit's report) keep their section highlighted.
+        const active =
+          pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(`${item.href}/`));
         return (
           <Link
             key={item.href}
@@ -47,15 +47,6 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
           </Link>
         );
       })}
-      {upcoming.map((name) => (
-        <span
-          key={name}
-          className="flex items-center justify-between px-3 py-2 text-sm text-muted-foreground"
-        >
-          {name}
-          <span className="text-xs">Próximamente</span>
-        </span>
-      ))}
     </nav>
   );
 }
@@ -121,7 +112,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden border-r md:flex md:w-64 md:flex-col">
+      <aside className="hidden border-r md:flex md:w-64 md:flex-col print:!hidden">
         <Link href="/dashboard" className="border-b px-4 py-5 text-lg font-bold">
           SGSI Platform
         </Link>
@@ -131,7 +122,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3 md:hidden">
+        <header className="flex items-center justify-between border-b px-4 py-3 md:hidden print:hidden">
           <Link href="/dashboard" className="text-lg font-bold">
             SGSI
           </Link>
@@ -145,7 +136,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           </button>
         </header>
         {menuOpen && (
-          <div id="mobile-menu" className="border-b md:hidden">
+          <div id="mobile-menu" className="border-b md:hidden print:hidden">
             <OrganizationBox />
             <Nav onNavigate={() => setMenuOpen(false)} />
             <UserBox />
